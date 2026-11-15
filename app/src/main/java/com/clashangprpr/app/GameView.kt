@@ -26,19 +26,18 @@ import kotlin.math.*
 import kotlin.random.Random
 
 /**
- * FARM WARS (حروب المزارع) - Standalone 2.5D Stylized Strategy & Farming Engine
- * - Non-pixel 3D/2.5D hand-painted artwork & animated splash screen
- * - 3 Farm Manor Hall Tiers (Lv.1 Homestead, Lv.2 Stone Keep, Lv.3 Grand Emerald Citadel)
- * - 3 Distinct Upgrade Levels per building with new unlocks at each Manor Hall tier
- * - Green Bio-Elixir (#00E676) + Army Rations/Food preparation system required to train & raid
- * - Living 2.5D animations: chimney smoke, spinning windmills, bubbling green elixir tanks,
- *   swaying wheat fields, levitating emerald crystals, roaming farm workers, and recoiling turrets
+ * FARM WARS (حروب المزارع) - v5 Walls & Zero-to-Empire Progression Edition
+ * - Starts from SCRATCH: Only Lv.1 Manor Hall + Wild Obstacles (0 pre-built buildings, 0 pre-trained troops!)
+ * - Step-by-step Interactive Quest Guide (Quests 1..7) with rewards & pointer arrows
+ * - Auto-Connecting 2.5D Isometric Walls (Corner Watchtowers, Arched Gates, / and \ directional segments,
+ *   continuous finger-drag wall drawing, and 1-tap Auto-Surround Wall Ring!)
  */
 class GameView(context: Context) : SurfaceView(context), SurfaceHolder.Callback, Runnable {
 
     @Volatile private var running = false
     private var gameThread: Thread? = null
-    private val prefs = context.getSharedPreferences("farm_wars_25d_save_v3", Context.MODE_PRIVATE)
+    // v5 prefs key so the game starts cleanly from scratch (Stage 0)
+    private val prefs = context.getSharedPreferences("farm_wars_25d_save_v5", Context.MODE_PRIVATE)
 
     // Screen & Camera
     private var screenW = 1280f
@@ -47,54 +46,56 @@ class GameView(context: Context) : SurfaceView(context), SurfaceHolder.Callback,
     private var camY = 0f
     private var camZoom = 1.0f
 
-    // Isometric 14x14 Farm Grid
+    // Isometric 14x14 Farm Grid aligned to the island clearing
     private val gridSize = 14
-    private val tileW = 106f
-    private val tileH = 54f
+    private val tileW = 78f
+    private val tileH = 39f
+
+    // Dedicated Paints (bitmapPaint is locked at alpha=255 so sprites are NEVER transparent!)
+    private val bitmapPaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
+    private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val path = Path()
 
     // Assets
     private val bitmaps = HashMap<String, Bitmap>()
     private var splashBg: Bitmap? = null
     private var islandBg: Bitmap? = null
-    private val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
-    private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG)
-    private val path = Path()
 
     // Professional Loading Screen State
     private var isLoadingScreen = true
     private var loadingProgress = 0f
-    private var loadingReadyToEnter = false
     private var loadingTipIndex = 0
     private val loadingTips = listOf(
-        "نصيحة: اجمع القمح واللحوم واطبخ مؤونة الجيش 🍗 في مطبخ المزرعة قبل شن أي هجوم!",
-        "نصيحة: الإكسير الأخضر 🧪 يُستخرج من مضخات الطاقة الحيوية ويُستخدم لتدريب جيش المزارع.",
-        "نصيحة: ترقية قاعة المزرعة (Manor Hall) للمستوى 2 و 3 يفتح دفاعات وجنوداً وترقيات جديدة!",
-        "نصيحة: لكل مبنى 3 مستويات ترقية تزيد الإنتاج والقوة وتضيف تأثيرات زمردية وذهبية."
+        "نصيحة: تبدأ مزرعتك بقاعة واحدة وأرض برية؛ اتبع المهام لبناء حقولك وأسوارك وجيشك من الصفر!",
+        "نصيحة: اسحب إصبعك في وضع بناء الأسوار لرسم حزام أسوار متصل مع أبراج ركنية وبوابات تلقائية!",
+        "نصيحة: أزل صخور الزمرد وجذوع الأشجار البرية من أرضك للحصول على جواهر مجانية 💎!",
+        "نصيحة: اطبخ مؤونة الجيش 🍗 في المطبخ من القمح واللحوم قبل تدريب الجنود أو شن الهجوم."
     )
 
     data class SplashEmber(var x: Float, var y: Float, var vx: Float, var vy: Float, var size: Float, var color: Int, var alpha: Int)
     private val splashEmbers = CopyOnWriteArrayList<SplashEmber>()
 
-    // Core Player Resources
-    private var gold = 2500
-    private var greenElixir = 2000     // Green Bio-Elixir (#00E676)
-    private var armyRations = 90       // Prepared Food/Rations required to train & raid!
-    private var gems = 150
-    private var trophies = 120
-    private var wheatCount = 12
-    private var meatCount = 6
-    private var breadCount = 5
-    private var attackBuffPercent = 0  // Earned by cooking Royal Banquet in Field Kitchen!
+    // Core Player Resources (Starts modest from scratch!)
+    private var gold = 650
+    private var greenElixir = 450
+    private var armyRations = 0
+    private var gems = 45
+    private var trophies = 0
+    private var wheatCount = 3
+    private var meatCount = 0
+    private var breadCount = 0
+    private var attackBuffPercent = 0
+    private var currentQuestStep = 1 // 1..7 step-by-step progression quests
 
     private var playerName = "LordFarmer"
     private var guildName = "Emerald Harvest"
-    private var guildRole = "Leader"
     private var serverUrl = "https://apk3rade.mangoad.online/server_api.php"
     private var ifCookie: String? = null
-    private var statusBanner = "مرحباً بك في FARM WARS! جهّز مؤونة الجيش 🍗 من المطبخ وطور قاعة المزرعة!"
-    private var statusBannerTimer = 240
+    private var statusBanner = ""
+    private var statusBannerTimer = 0
 
-    // Building Catalog (13 Non-Pixel 2.5D Buildings with Manor Hall Unlock Requirements & Max Level 3)
+    // Building Catalog
     enum class BType(
         val titleAr: String,
         val titleEn: String,
@@ -107,22 +108,21 @@ class GameView(context: Context) : SurfaceView(context), SurfaceHolder.Callback,
         val isDefense: Boolean,
         val atkRange: Float,
         val atkDamage: Int,
-        val atkCooldownMax: Int,
-        val descriptionAr: String
+        val atkCooldownMax: Int
     ) {
-        MANOR_HALL("قاعة المزرعة الكبرى", "Manor Hall", "manor_lv1", 2, 1000, 0, 2600, 1, false, 0f, 0, 0, "قلب المزرعة؛ ترقيتها للمستوى 2 و 3 تفتح مباني وجنوداً وترقيات جديدة"),
-        WHEAT_FIELD("حقل القمح الذهبي", "Wheat Field", "wheat_field", 2, 180, 0, 750, 1, false, 0f, 0, 0, "ينتج القمح الطازج 🌾 اللازم لطبخ مؤونة الجيش"),
-        GREEN_ELIXIR("مضخة الإكسير الأخضر", "Bio-Elixir Pump", "green_elixir", 2, 220, 0, 850, 1, false, 0f, 0, 0, "تستخرج الإكسير الأخضر 🧪 لتدريب الجنود وتطوير المعسكرات"),
-        GOLD_SILO("صومعة الذهب والحبوب", "Gold Silo", "gold_silo", 2, 0, 220, 950, 1, false, 0f, 0, 0, "تنتج وتخزن العملات الذهبية 🪙 لترقية القلعة والدفاعات"),
-        FIELD_KITCHEN("مطبخ مؤونة الجيش", "Field Kitchen", "field_kitchen", 2, 260, 150, 900, 1, false, 0f, 0, 0, "يطبخ القمح واللحوم لتحويلها إلى مؤونة جيش 🍗 ضرورية للهجوم!"),
-        ARMY_CAMP("معسكر تدريب المزارعين", "Army Camp", "army_camp", 2, 200, 240, 950, 1, false, 0f, 0, 0, "يدرب وحدات جيش المزرعة باستخدام الإكسير الأخضر والمؤونة"),
-        CORN_CANNON("مدفع الذرة المدرع", "Corn Cannon", "corn_cannon", 1, 320, 0, 980, 1, true, 4.6f, 46, 36, "يطلق قذائف ذرة ذهبية متفجرة على المهاجمين الأرضيين"),
-        STONE_WALL("سور الحماية الصخري", "Stone Barricade", "stone_wall", 1, 60, 0, 1500, 1, false, 0f, 0, 0, "سور دفاعي متين يعيق تقدم قوات العدو"),
-        RANCH_BARN("حظيرة الماشية واللحوم", "Ranch Barn", "ranch_barn", 2, 380, 180, 1050, 2, false, 0f, 0, 0, "(تفتح في قاعة مستوى 2) تنتج اللحوم الفاخرة 🥩 لولائم الجيش"),
-        WINDMILL_BAKERY("طاحونة المخبز الآلي", "Windmill Bakery", "windmill_bakery", 2, 420, 220, 1100, 2, false, 0f, 0, 0, "(تفتح في قاعة مستوى 2) تطحن القمح وتنتج الخبز ومؤونة إضافية تلقائياً"),
-        GUILD_HALL("قلعة تحالف المزارعين", "Guild Hall", "guild_hall", 2, 550, 350, 1400, 2, false, 0f, 0, 0, "(تفتح في قاعة مستوى 2) تتيح حروب المزارع 5 ضد 5 وطلب الدعم"),
-        EMERALD_TOWER("برج الزمرد الأخضر", "Emerald Tower", "emerald_tower", 1, 750, 450, 1350, 3, true, 5.6f, 68, 32, "(يفتح في قاعة مستوى 3) يطلق صواعق إكسير أخضر متوهجة بعيدة المدى"),
-        HONEY_MORTAR("هاون قذائف العسل", "Honey Mortar", "honey_mortar", 1, 820, 500, 1450, 3, true, 6.4f, 85, 65, "(يفتح في قاعة مستوى 3) يقصف كرات عسل متفجرة تبطئ وتدمر تجمعات العدو")
+        MANOR_HALL("قاعة المزرعة الكبرى", "Manor Hall", "manor_lv1", 2, 900, 0, 2600, 1, false, 0f, 0, 0),
+        WHEAT_FIELD("حقل القمح الذهبي", "Wheat Field", "wheat_field", 2, 150, 0, 750, 1, false, 0f, 0, 0),
+        GREEN_ELIXIR("مضخة الإكسير الأخضر", "Bio-Elixir Pump", "green_elixir", 2, 180, 0, 850, 1, false, 0f, 0, 0),
+        GOLD_SILO("صومعة الذهب", "Gold Silo", "gold_silo", 2, 0, 180, 950, 1, false, 0f, 0, 0),
+        FIELD_KITCHEN("مطبخ مؤونة الجيش", "Field Kitchen", "field_kitchen", 2, 200, 100, 900, 1, false, 0f, 0, 0),
+        ARMY_CAMP("معسكر تدريب المزارعين", "Army Camp", "army_camp", 2, 180, 180, 950, 1, false, 0f, 0, 0),
+        CORN_CANNON("مدفع الذرة المدرع", "Corn Cannon", "corn_cannon", 1, 250, 0, 980, 1, true, 4.8f, 48, 35),
+        STONE_WALL("سور الحصن المتصل", "Fortress Wall", "wall_lv1", 1, 25, 0, 1600, 1, false, 0f, 0, 0),
+        RANCH_BARN("حظيرة الماشية واللحوم", "Ranch Barn", "ranch_barn", 2, 380, 180, 1050, 2, false, 0f, 0, 0),
+        WINDMILL_BAKERY("طاحونة المخبز الآلي", "Windmill Bakery", "windmill_bakery", 2, 420, 220, 1100, 2, false, 0f, 0, 0),
+        GUILD_HALL("قلعة تحالف المزارعين", "Guild Hall", "guild_hall", 2, 500, 300, 1400, 2, false, 0f, 0, 0),
+        EMERALD_TOWER("برج الزمرد الأخضر", "Emerald Tower", "emerald_tower", 1, 700, 400, 1350, 3, true, 5.8f, 72, 30),
+        HONEY_MORTAR("هاون قذائف العسل", "Honey Mortar", "honey_mortar", 1, 780, 450, 1450, 3, true, 6.5f, 90, 62)
     }
 
     data class PlacedBuilding(
@@ -130,7 +130,7 @@ class GameView(context: Context) : SurfaceView(context), SurfaceHolder.Callback,
         val type: BType,
         var gx: Int,
         var gy: Int,
-        var level: Int = 1,            // Strictly 1..3 (3 upgrades per building)
+        var level: Int = 1,
         var hp: Int = type.maxHp,
         var maxHp: Int = type.maxHp,
         var prodTimer: Int = 0,
@@ -154,13 +154,28 @@ class GameView(context: Context) : SurfaceView(context), SurfaceHolder.Callback,
         }
     }
 
-    // 6 Original Non-Pixel 2.5D Farm Wars Units (with Food/Ration requirement!)
+    // Removable Wild Obstacles on the Untamed Island!
+    enum class ObstacleType(val titleAr: String, val spriteKey: String, val clearCostGold: Int, val rewardGems: Int, val rewardElixir: Int) {
+        CRYSTAL_ROCK("صخرة الزمرد البرية", "obs_rock", 40, 10, 100),
+        HOLLOW_LOG("جذع البلوط القديم", "obs_log", 30, 8, 80),
+        ANCIENT_WELL("البئر الحجرية المهجورة", "obs_well", 50, 15, 140)
+    }
+
+    data class WildObstacle(
+        val id: Int,
+        val type: ObstacleType,
+        val gx: Int,
+        val gy: Int,
+        var clearTicksLeft: Int = 0
+    )
+    private val wildObstacles = CopyOnWriteArrayList<WildObstacle>()
+
+    // 6 Original Non-Pixel 2.5D Farm Wars Units (Starts at ZERO trained units!)
     enum class UType(
         val titleAr: String,
-        val titleEn: String,
         val spriteKey: String,
         val costElixir: Int,
-        val costRations: Int,   // Food required to train & feed!
+        val costRations: Int,
         val unlockManorLv: Int,
         val maxHp: Int,
         val damage: Int,
@@ -169,58 +184,50 @@ class GameView(context: Context) : SurfaceView(context), SurfaceHolder.Callback,
         val prefersWalls: Boolean,
         val prefersDefenses: Boolean
     ) {
-        VANGUARD("حارس المذراة", "Pitchfork Vanguard", "unit_vanguard", 50, 4, 1, 320, 34, 0.052f, 0.9f, false, false),
-        RANGER("رامية البلوط", "Acorn Ranger", "unit_ranger", 70, 5, 1, 210, 42, 0.056f, 3.6f, false, false),
-        BRUISER("عملاق الحظيرة", "Barn Bruiser", "unit_bruiser", 160, 12, 2, 1050, 62, 0.036f, 1.0f, false, true),
-        SAPPER("مفجر اليقطين", "Pumpkin Sapper", "unit_sapper", 130, 8, 2, 220, 260, 0.072f, 0.85f, true, false),
-        ALCHEMIST("حكيم الإكسير الأخضر", "Emerald Alchemist", "unit_alchemist", 220, 15, 3, 420, 96, 0.046f, 4.1f, false, false),
-        MECH("آلي الحصاد المدرع", "Iron Harvest Mech", "unit_mech", 340, 24, 3, 2100, 115, 0.028f, 1.1f, false, true)
+        VANGUARD("حارس المذراة", "unit_vanguard", 45, 4, 1, 340, 36, 0.055f, 0.9f, false, false),
+        RANGER("رامية البلوط", "unit_ranger", 65, 5, 1, 220, 44, 0.058f, 3.6f, false, false),
+        BRUISER("عملاق الحظيرة", "unit_bruiser", 150, 12, 2, 1100, 65, 0.038f, 1.0f, false, true),
+        SAPPER("مفجر اليقطين", "unit_sapper", 120, 8, 2, 230, 280, 0.075f, 0.85f, true, false),
+        ALCHEMIST("حكيم الإكسير", "unit_alchemist", 210, 15, 3, 440, 98, 0.048f, 4.1f, false, false),
+        MECH("آلي الحصاد", "unit_mech", 320, 24, 3, 2200, 120, 0.030f, 1.1f, false, true)
     }
 
+    // Starts at 0 troops so the player builds their army from scratch!
     private val armyRoster = mutableMapOf(
-        UType.VANGUARD to 8,
-        UType.RANGER to 6,
-        UType.BRUISER to 2,
-        UType.SAPPER to 2,
-        UType.ALCHEMIST to 1,
-        UType.MECH to 1
+        UType.VANGUARD to 0,
+        UType.RANGER to 0,
+        UType.BRUISER to 0,
+        UType.SAPPER to 0,
+        UType.ALCHEMIST to 0,
+        UType.MECH to 0
     )
 
-    // Tactical Farm Spells (Green Overgrowth Heal, Spicy Pepper Rage, Acorn Barrage)
     enum class SpellType(val titleAr: String, val icon: String, val costElixir: Int, val color: Int) {
-        PEPPER_RAGE("حساء الفلفل الحار", "🌶️", 160, Color.parseColor("#FF6D00")),
-        GREEN_NECTAR("مطر الإكسير الأخضر", "🧪", 160, Color.parseColor("#00E676")),
-        CORN_BARRAGE("قصف الذرة الذهبية", "🌽", 190, Color.parseColor("#FFD600"))
+        PEPPER_RAGE("فلفل حار", "🌶️", 140, Color.parseColor("#FF6D00")),
+        GREEN_NECTAR("إكسير الشفاء", "🧪", 140, Color.parseColor("#00E676")),
+        CORN_BARRAGE("قصف الذرة", "🌽", 170, Color.parseColor("#FFD600"))
     }
     private val spellCounts = mutableMapOf(
-        SpellType.PEPPER_RAGE to 2,
-        SpellType.GREEN_NECTAR to 2,
-        SpellType.CORN_BARRAGE to 1
+        SpellType.PEPPER_RAGE to 0,
+        SpellType.GREEN_NECTAR to 0,
+        SpellType.CORN_BARRAGE to 0
     )
     private var selectedSpell: SpellType? = null
 
-    data class ActiveSpellZone(
-        val type: SpellType,
-        val gx: Float,
-        val gy: Float,
-        var ticksLeft: Int,
-        val radius: Float = 2.6f
-    )
+    data class ActiveSpellZone(val type: SpellType, val gx: Float, val gy: Float, var ticksLeft: Int, val radius: Float = 2.6f)
     private val activeSpells = CopyOnWriteArrayList<ActiveSpellZone>()
 
-    // Living Village Workers (Roaming between Houses, Fields, and Kitchen!)
     data class VillageWorker(
         var gx: Float,
         var gy: Float,
         var targetGx: Float,
         var targetGy: Float,
-        var carryType: Int, // 0=wheat, 1=green_elixir, 2=rations
+        var carryType: Int,
         var animPhase: Float,
         var waitTicks: Int = 0
     )
     private val villageWorkers = CopyOnWriteArrayList<VillageWorker>()
 
-    // Ambient Chimney Smoke / Green Elixir Bubbles / Sparkles
     data class AmbientParticle(
         var sx: Float,
         var sy: Float,
@@ -233,7 +240,6 @@ class GameView(context: Context) : SurfaceView(context), SurfaceHolder.Callback,
     )
     private val ambientParticles = CopyOnWriteArrayList<AmbientParticle>()
 
-    // Active Battle Units
     data class ActiveUnit(
         val type: UType,
         var gx: Float,
@@ -260,27 +266,18 @@ class GameView(context: Context) : SurfaceView(context), SurfaceHolder.Callback,
         var progress: Float = 0f
     )
 
-    data class FloatText(
-        var text: String,
-        var sx: Float,
-        var sy: Float,
-        val color: Int,
-        var life: Int = 50
-    )
+    data class FloatText(var text: String, var sx: Float, var sy: Float, val color: Int, var life: Int = 55)
 
-    // Lists
     private val myBuildings = CopyOnWriteArrayList<PlacedBuilding>()
     private val raidBuildings = CopyOnWriteArrayList<PlacedBuilding>()
     private val activeUnits = CopyOnWriteArrayList<ActiveUnit>()
     private val projectiles = CopyOnWriteArrayList<Projectile>()
     private val floatTexts = CopyOnWriteArrayList<FloatText>()
 
-    // Builders
     private var totalBuilders = 2
 
-    // Modes & Selection
     private var inRaidMode = false
-    private var raidTargetName = "مزرعة الجبل الحصينة"
+    private var raidTargetName = "مزرعة الوادي الحصينة"
     private var raidLootGold = 950
     private var raidLootElixir = 850
     private var raidLootRations = 45
@@ -289,17 +286,16 @@ class GameView(context: Context) : SurfaceView(context), SurfaceHolder.Callback,
     private var raidDestructionPct = 0
     private var raidTotalStartBuildings = 1
     private var guildReinforcementsCalled = false
+    private var hasCompletedFirstRaid = false
 
     private var selectedUnitType: UType = UType.VANGUARD
     private var selectedBuilding: PlacedBuilding? = null
     private var buildModeType: BType? = null
     private var moveBuildingMode = false
 
-    // Active Modal Dialog
     enum class ModalType { NONE, BUILD_SHOP, KITCHEN_RATIONS, ARMY_TRAIN, TRUCK_ORDERS, GUILD_WAR, GEM_SHOP }
     private var activeModal = ModalType.NONE
 
-    // Farm Delivery Contracts
     data class FarmContract(
         val title: String,
         val reqWheat: Int,
@@ -311,14 +307,12 @@ class GameView(context: Context) : SurfaceView(context), SurfaceHolder.Callback,
     )
     private val contracts = CopyOnWriteArrayList<FarmContract>()
 
-    // Guild Chat & 5v5 Farm War
     private val guildChat = CopyOnWriteArrayList<String>()
     private var warOurStars = 9
     private var warEnemyStars = 7
     private var warAttacksLeft = 2
     private var animTickGlobal = 0f
 
-    // Touch Gesture State
     private var lastTouchX = 0f
     private var lastTouchY = 0f
     private var touchDownX = 0f
@@ -328,27 +322,28 @@ class GameView(context: Context) : SurfaceView(context), SurfaceHolder.Callback,
     init {
         holder.addCallback(this)
         isFocusable = true
+        bitmapPaint.alpha = 255
         loadAllAssets()
         initSplashEmbers()
         loadOrInitVillage()
         initWorkers()
         resetContracts()
-        guildChat.add("الزعيم: لا تنسوا طبخ مؤونة الجيش 🍗 في المطبخ قبل الهجوم في حرب المزارع!")
-        guildChat.add("القائد سيف: الإكسير الأخضر 🧪 جاهز لدعم أعضاء التحالف بآلي الحصاد المدرع!")
+        guildChat.add("الزعيم: ابدأ بتعمير مزرعتك وبناء الأسوار المتصلة حول القاعة!")
+        guildChat.add("القائد سيف: أزل الصخور البرية للحصول على الجواهر واطبخ مؤونة الجيش 🍗!")
     }
 
     private fun initSplashEmbers() {
         splashEmbers.clear()
-        for (i in 0 until 28) {
+        for (i in 0 until 26) {
             splashEmbers.add(
                 SplashEmber(
                     x = Random.nextFloat() * 1280f,
                     y = Random.nextFloat() * 720f,
-                    vx = (Random.nextFloat() - 0.5f) * 1.4f,
-                    vy = -1.2f - Random.nextFloat() * 2.2f,
-                    size = 4f + Random.nextFloat() * 7f,
+                    vx = (Random.nextFloat() - 0.5f) * 1.3f,
+                    vy = -1.2f - Random.nextFloat() * 2.0f,
+                    size = 4f + Random.nextFloat() * 6f,
                     color = if (i % 2 == 0) Color.parseColor("#00E676") else Color.parseColor("#FFD54F"),
-                    alpha = 140 + Random.nextInt(115)
+                    alpha = 150 + Random.nextInt(105)
                 )
             )
         }
@@ -357,15 +352,11 @@ class GameView(context: Context) : SurfaceView(context), SurfaceHolder.Callback,
     private fun loadAllAssets() {
         val am = context.assets
         try {
-            am.open("iso/farm_wars_splash.jpg").use {
-                splashBg = BitmapFactory.decodeStream(it)
-            }
+            am.open("iso/farm_wars_splash.jpg").use { splashBg = BitmapFactory.decodeStream(it) }
         } catch (_: Exception) {}
 
         try {
-            am.open("iso/iso_island_bg.jpg").use {
-                islandBg = BitmapFactory.decodeStream(it)
-            }
+            am.open("iso/iso_island_bg.jpg").use { islandBg = BitmapFactory.decodeStream(it) }
         } catch (_: Exception) {}
 
         val files = listOf(
@@ -374,6 +365,11 @@ class GameView(context: Context) : SurfaceView(context), SurfaceHolder.Callback,
             "wheat_field", "ranch_barn", "army_camp",
             "corn_cannon", "emerald_tower", "guild_hall",
             "windmill_bakery", "honey_mortar", "stone_wall",
+            "wall_lv1", "wall_lv1_flip", "wall_corner_lv1",
+            "wall_gate", "wall_gate_flip",
+            "wall_lv2", "wall_lv2_flip", "wall_corner_lv2",
+            "wall_lv3", "wall_lv3_flip",
+            "obs_rock", "obs_log", "obs_well",
             "unit_vanguard", "unit_ranger", "unit_bruiser",
             "unit_sapper", "unit_alchemist", "unit_mech"
         )
@@ -397,21 +393,26 @@ class GameView(context: Context) : SurfaceView(context), SurfaceHolder.Callback,
         for ((u, cnt) in armyRoster) {
             total += cnt * (u.costRations / 2).coerceAtLeast(2)
         }
-        return total.coerceAtLeast(10)
+        return total.coerceAtLeast(8)
     }
 
     private fun loadOrInitVillage() {
-        gold = prefs.getInt("gold", 2500)
-        greenElixir = prefs.getInt("greenElixir", 2000)
-        armyRations = prefs.getInt("armyRations", 95)
-        gems = prefs.getInt("gems", 150)
-        trophies = prefs.getInt("trophies", 120)
-        wheatCount = prefs.getInt("wheat", 12)
-        meatCount = prefs.getInt("meat", 6)
-        breadCount = prefs.getInt("bread", 5)
+        gold = prefs.getInt("gold", 650)
+        greenElixir = prefs.getInt("greenElixir", 450)
+        armyRations = prefs.getInt("armyRations", 0)
+        gems = prefs.getInt("gems", 45)
+        trophies = prefs.getInt("trophies", 0)
+        wheatCount = prefs.getInt("wheat", 3)
+        meatCount = prefs.getInt("meat", 0)
+        breadCount = prefs.getInt("bread", 0)
         totalBuilders = prefs.getInt("builders", 2)
+        currentQuestStep = prefs.getInt("questStep", 1)
         playerName = prefs.getString("playerName", "LordFarmer") ?: "LordFarmer"
         guildName = prefs.getString("guildName", "Emerald Harvest") ?: "Emerald Harvest"
+
+        for (u in UType.values()) {
+            armyRoster[u] = prefs.getInt("unit_${u.name}", 0)
+        }
 
         val savedJson = prefs.getString("buildings_json", null)
         myBuildings.clear()
@@ -438,41 +439,145 @@ class GameView(context: Context) : SurfaceView(context), SurfaceHolder.Callback,
             } catch (_: Exception) {}
         }
 
+        val savedObs = prefs.getString("obstacles_json", null)
+        wildObstacles.clear()
+        if (!savedObs.isNullOrEmpty()) {
+            try {
+                val arr = JSONArray(savedObs)
+                for (i in 0 until arr.length()) {
+                    val o = arr.getJSONObject(i)
+                    val oType = ObstacleType.valueOf(o.getString("type"))
+                    wildObstacles.add(WildObstacle(o.getInt("id"), oType, o.getInt("gx"), o.getInt("gy")))
+                }
+            } catch (_: Exception) {}
+        }
+
         if (myBuildings.isEmpty()) {
-            var idGen = 1
-            fun addB(t: BType, x: Int, y: Int, lv: Int = 1) {
-                val mHp = (t.maxHp * (1.0 + (lv - 1) * 0.45)).toInt()
-                myBuildings.add(PlacedBuilding(idGen++, t, x, y, lv, mHp, mHp))
+            resetToZeroScratchStart()
+        }
+    }
+
+    private fun resetToZeroScratchStart() {
+        myBuildings.clear()
+        wildObstacles.clear()
+        for (u in UType.values()) armyRoster[u] = 0
+        for (s in SpellType.values()) spellCounts[s] = 0
+        gold = 650
+        greenElixir = 450
+        armyRations = 0
+        gems = 45
+        trophies = 0
+        wheatCount = 3
+        meatCount = 0
+        breadCount = 0
+        currentQuestStep = 1
+        hasCompletedFirstRaid = false
+
+        // Start with ONLY the Lv.1 Manor Hall in the center (6, 6)!
+        myBuildings.add(PlacedBuilding(1, BType.MANOR_HALL, 6, 6, 1, BType.MANOR_HALL.maxHp, BType.MANOR_HALL.maxHp))
+
+        // Populate 8 Wild Obstacles around the untamed island clearing
+        wildObstacles.add(WildObstacle(1, ObstacleType.CRYSTAL_ROCK, 2, 3))
+        wildObstacles.add(WildObstacle(2, ObstacleType.HOLLOW_LOG, 10, 2))
+        wildObstacles.add(WildObstacle(3, ObstacleType.ANCIENT_WELL, 2, 10))
+        wildObstacles.add(WildObstacle(4, ObstacleType.CRYSTAL_ROCK, 11, 9))
+        wildObstacles.add(WildObstacle(5, ObstacleType.HOLLOW_LOG, 3, 7))
+        wildObstacles.add(WildObstacle(6, ObstacleType.CRYSTAL_ROCK, 9, 11))
+        wildObstacles.add(WildObstacle(7, ObstacleType.HOLLOW_LOG, 7, 2))
+        wildObstacles.add(WildObstacle(8, ObstacleType.ANCIENT_WELL, 11, 5))
+        saveVillage()
+    }
+
+    // Optional instant fortress builder for testing a full walled castle
+    private fun buildSampleWalledFortress() {
+        myBuildings.clear()
+        wildObstacles.clear()
+        var idGen = 1
+        fun addB(t: BType, x: Int, y: Int, lv: Int = 2) {
+            val mHp = (t.maxHp * (1.0 + (lv - 1) * 0.45)).toInt()
+            myBuildings.add(PlacedBuilding(idGen++, t, x, y, lv, mHp, mHp))
+        }
+        // Center Manor Hall Lv.2 inside a 6x6 Connected Stone/Wood Wall Perimeter (gx 4..9, gy 4..9)
+        addB(BType.MANOR_HALL, 6, 6, 2)
+        for (x in 4..9) {
+            addB(BType.STONE_WALL, x, 4, 2)
+            addB(BType.STONE_WALL, x, 9, 2)
+        }
+        for (y in 5..8) {
+            addB(BType.STONE_WALL, 4, y, 2)
+            addB(BType.STONE_WALL, 9, y, 2)
+        }
+        // Defenses & Economy outside/around the walled keep
+        addB(BType.CORN_CANNON, 5, 5, 2)
+        addB(BType.CORN_CANNON, 8, 5, 2)
+        addB(BType.GOLD_SILO, 6, 1, 2)
+        addB(BType.FIELD_KITCHEN, 1, 5, 2)
+        addB(BType.GREEN_ELIXIR, 10, 5, 2)
+        addB(BType.WHEAT_FIELD, 1, 9, 2)
+        addB(BType.WHEAT_FIELD, 6, 11, 2)
+        addB(BType.ARMY_CAMP, 10, 9, 2)
+        addB(BType.RANCH_BARN, 2, 2, 2)
+        addB(BType.GUILD_HALL, 10, 2, 2)
+
+        armyRoster[UType.VANGUARD] = 6
+        armyRoster[UType.RANGER] = 5
+        armyRoster[UType.BRUISER] = 2
+        armyRoster[UType.SAPPER] = 2
+        gold = 2800
+        greenElixir = 2200
+        armyRations = 110
+        currentQuestStep = 8
+        saveVillage()
+        showBanner("🏰 تم تشييد القلعة المسوّرة بالكامل مع الأسوار المتصلة والأبراج الركنية!")
+    }
+
+    private fun autoSurroundManorWithWalls() {
+        val mh = myBuildings.firstOrNull { it.type == BType.MANOR_HALL } ?: return
+        val minX = (mh.gx - 1).coerceAtLeast(1)
+        val maxX = (mh.gx + mh.type.footprint).coerceAtMost(gridSize - 2)
+        val minY = (mh.gy - 1).coerceAtLeast(1)
+        val maxY = (mh.gy + mh.type.footprint).coerceAtMost(gridSize - 2)
+
+        var placedCount = 0
+        var nextId = (myBuildings.maxOfOrNull { it.id } ?: 0) + 1
+        for (x in minX..maxX) {
+            for (y in listOf(minY, maxY)) {
+                if (isAreaFree(x, y, 1, null) && gold >= BType.STONE_WALL.baseCostGold) {
+                    gold -= BType.STONE_WALL.baseCostGold
+                    myBuildings.add(PlacedBuilding(nextId++, BType.STONE_WALL, x, y, 1, BType.STONE_WALL.maxHp, BType.STONE_WALL.maxHp, tapBounce = 1f))
+                    placedCount++
+                }
             }
-            // Default starting layout (Manor Hall Lv.1 + Starter Farm & Defenses)
-            addB(BType.MANOR_HALL, 6, 6, 1)
-            addB(BType.FIELD_KITCHEN, 4, 6, 1)
-            addB(BType.GREEN_ELIXIR, 8, 6, 1)
-            addB(BType.GOLD_SILO, 6, 4, 1)
-            addB(BType.WHEAT_FIELD, 3, 8, 1)
-            addB(BType.WHEAT_FIELD, 5, 9, 1)
-            addB(BType.ARMY_CAMP, 9, 8, 1)
-            addB(BType.CORN_CANNON, 5, 5, 1)
-            addB(BType.CORN_CANNON, 8, 5, 1)
-            addB(BType.STONE_WALL, 4, 4, 1)
-            addB(BType.STONE_WALL, 5, 4, 1)
-            addB(BType.STONE_WALL, 7, 4, 1)
-            addB(BType.STONE_WALL, 8, 4, 1)
+        }
+        for (y in (minY + 1) until maxY) {
+            for (x in listOf(minX, maxX)) {
+                if (isAreaFree(x, y, 1, null) && gold >= BType.STONE_WALL.baseCostGold) {
+                    gold -= BType.STONE_WALL.baseCostGold
+                    myBuildings.add(PlacedBuilding(nextId++, BType.STONE_WALL, x, y, 1, BType.STONE_WALL.maxHp, BType.STONE_WALL.maxHp, tapBounce = 1f))
+                    placedCount++
+                }
+            }
+        }
+        if (placedCount > 0) {
             saveVillage()
+            checkQuestProgression()
+            showBanner("🧱 تم بناء حزام أسوار متصل ($placedCount قطعة) مع أبراج ركنية وبوابات حول القاعة!")
+        } else {
+            showBanner("ℹ️ القاعة محاطة بالأسوار بالفعل أو الذهب غير كافٍ!")
         }
     }
 
     private fun initWorkers() {
         villageWorkers.clear()
-        for (i in 0 until 5) {
+        for (i in 0 until 2) {
             villageWorkers.add(
                 VillageWorker(
-                    gx = 5f + (i % 3) * 1.5f,
-                    gy = 6f + (i / 2) * 1.5f,
-                    targetGx = 4f + Random.nextFloat() * 5f,
-                    targetGy = 4f + Random.nextFloat() * 5f,
+                    gx = 5.5f + i * 1.5f,
+                    gy = 6.5f,
+                    targetGx = 6f,
+                    targetGy = 6f,
                     carryType = i % 3,
-                    animPhase = i * 1.3f
+                    animPhase = i * 1.5f
                 )
             )
         }
@@ -490,7 +595,16 @@ class GameView(context: Context) : SurfaceView(context), SurfaceHolder.Callback,
                 o.put("level", b.level.coerceIn(1, 3))
                 arr.put(o)
             }
-            prefs.edit()
+            val obsArr = JSONArray()
+            for (ob in wildObstacles) {
+                val o = JSONObject()
+                o.put("id", ob.id)
+                o.put("type", ob.type.name)
+                o.put("gx", ob.gx)
+                o.put("gy", ob.gy)
+                obsArr.put(o)
+            }
+            val ed = prefs.edit()
                 .putInt("gold", gold)
                 .putInt("greenElixir", greenElixir)
                 .putInt("armyRations", armyRations)
@@ -500,11 +614,84 @@ class GameView(context: Context) : SurfaceView(context), SurfaceHolder.Callback,
                 .putInt("meat", meatCount)
                 .putInt("bread", breadCount)
                 .putInt("builders", totalBuilders)
+                .putInt("questStep", currentQuestStep)
                 .putString("playerName", playerName)
                 .putString("guildName", guildName)
                 .putString("buildings_json", arr.toString())
-                .apply()
+                .putString("obstacles_json", obsArr.toString())
+            for ((u, cnt) in armyRoster) {
+                ed.putInt("unit_${u.name}", cnt)
+            }
+            ed.apply()
         } catch (_: Exception) {}
+    }
+
+    // Step-by-Step Quest Progression Checker
+    private fun checkQuestProgression() {
+        var advanced = false
+        if (currentQuestStep == 1 && myBuildings.any { it.type == BType.WHEAT_FIELD }) {
+            currentQuestStep = 2
+            gold += 300
+            wheatCount += 4
+            showBanner("🎉 اكتملت المهمة 1! مكافأة: +300 ذهب 🪙 و +4 قمح 🌾")
+            advanced = true
+        }
+        if (currentQuestStep == 2 && myBuildings.any { it.type == BType.GREEN_ELIXIR }) {
+            currentQuestStep = 3
+            greenElixir += 350
+            gold += 250
+            showBanner("🎉 اكتملت المهمة 2! مكافأة: +350 إكسير أخضر 🧪 و +250 ذهب 🪙")
+            advanced = true
+        }
+        if (currentQuestStep == 3 && myBuildings.any { it.type == BType.FIELD_KITCHEN } && armyRations > 0) {
+            currentQuestStep = 4
+            armyRations += 45
+            gold += 350
+            showBanner("🎉 اكتملت المهمة 3! مكافأة: +45 مؤونة جيش 🍗 و +350 ذهب 🪙")
+            advanced = true
+        }
+        if (currentQuestStep == 4 && myBuildings.count { it.type == BType.STONE_WALL } >= 6) {
+            currentQuestStep = 5
+            gold += 450
+            gems += 15
+            showBanner("🎉 اكتملت المهمة 4 (تسوير الحصن)! مكافأة: +450 ذهب 🪙 و +15 جوهرة 💎")
+            advanced = true
+        }
+        if (currentQuestStep == 5 && myBuildings.any { it.type == BType.CORN_CANNON }) {
+            currentQuestStep = 6
+            greenElixir += 400
+            showBanner("🎉 اكتملت المهمة 5! مكافأة: +400 إكسير أخضر 🧪")
+            advanced = true
+        }
+        if (currentQuestStep == 6 && myBuildings.any { it.type == BType.ARMY_CAMP } && armyRoster.values.sum() >= 3) {
+            currentQuestStep = 7
+            armyRations += 50
+            gems += 20
+            showBanner("🎉 اكتملت المهمة 6 (تجهيز الجيش)! مكافأة: +50 مؤونة 🍗 و +20 جوهرة 💎")
+            advanced = true
+        }
+        if (currentQuestStep == 7 && (hasCompletedFirstRaid || getManorHallLevel() >= 2)) {
+            currentQuestStep = 8
+            gold += 1200
+            greenElixir += 800
+            gems += 30
+            showBanner("🏆 أكملت جميع مهام التأسيس! +1200 ذهب 🪙 و +800 إكسير 🧪 و +30 جوهرة 💎")
+            advanced = true
+        }
+        if (advanced) saveVillage()
+    }
+
+    private fun getCurrentQuestDescription(): String {
+        return when (currentQuestStep) {
+            1 -> "📜 مهمة 1/7: افتح [🏗️ البناء] وابنِ أول (حقل قمح ذهبي 🌾) لزراعة الغذاء"
+            2 -> "📜 مهمة 2/7: ابنِ (مضخة الإكسير الأخضر 🧪) لاستخراج الطاقة الحيوية"
+            3 -> "📜 مهمة 3/7: ابنِ (مطبخ مؤونة الجيش 🍗) واطبخ أول وجبة مؤونة من القمح"
+            4 -> "📜 مهمة 4/7: حصّن قاعتك! شيّد 6 قطع من (سور الحصن المتصل 🧱) حول القاعة"
+            5 -> "📜 مهمة 5/7: ابنِ (مدفع الذرة المدرع 🌽) لحماية مزرعتك"
+            6 -> "📜 مهمة 6/7: ابنِ (معسكر التدريب 🛡️) ودرّب أول 3 جنود بيدك!"
+            7 -> "📜 مهمة 7/7: شنّ أول [⚔️ هجوم] على الأعداء أو رقِّ قاعة المزرعة للمستوى 2!"
+            else -> "👑 مزرعتك مزدهرة! واصل ترقية الأسوار والأبراج وخض حروب التحالفات"
+        }
     }
 
     private fun resetContracts() {
@@ -514,38 +701,46 @@ class GameView(context: Context) : SurfaceView(context), SurfaceHolder.Callback,
         contracts.add(FarmContract("شحنة قلعة الزمرد الكبرى", 5, 3, 2, 1200, 950, 95))
     }
 
-    private fun busyBuildersCount(): Int = myBuildings.count { it.upgradeTicksLeft > 0 }
+    private fun busyBuildersCount(): Int = myBuildings.count { it.upgradeTicksLeft > 0 } + wildObstacles.count { it.clearTicksLeft > 0 }
 
-    // Isometric Coordinate Conversions
+    private fun gridOriginX(): Float = screenW * 0.50f + camX
+    private fun gridOriginY(): Float = screenH * 0.48f - (gridSize * tileH * 0.5f * camZoom) + camY
+
     private fun isoToScreenX(gx: Float, gy: Float): Float {
-        val originX = screenW * 0.50f + camX
-        return originX + (gx - gy) * (tileW * 0.5f) * camZoom
+        return gridOriginX() + (gx - gy) * (tileW * 0.5f) * camZoom
     }
 
     private fun isoToScreenY(gx: Float, gy: Float): Float {
-        val originY = screenH * 0.20f + camY
-        return originY + (gx + gy) * (tileH * 0.5f) * camZoom
+        return gridOriginY() + (gx + gy) * (tileH * 0.5f) * camZoom
     }
 
     private fun screenToIso(sx: Float, sy: Float): Pair<Float, Float> {
-        val originX = screenW * 0.50f + camX
-        val originY = screenH * 0.20f + camY
-        val dx = (sx - originX) / (tileW * 0.5f * camZoom)
-        val dy = (sy - originY) / (tileH * 0.5f * camZoom)
+        val dx = (sx - gridOriginX()) / (tileW * 0.5f * camZoom)
+        val dy = (sy - gridOriginY()) / (tileH * 0.5f * camZoom)
         val gx = (dy + dx) * 0.5f
         val gy = (dy - dx) * 0.5f
         return Pair(gx, gy)
     }
 
+    private fun clampCameraToIsland() {
+        val bgScale = 1.28f * camZoom
+        val maxPanX = ((screenW * bgScale - screenW) * 0.5f).coerceAtLeast(0f)
+        val maxPanY = ((screenH * bgScale - screenH) * 0.5f).coerceAtLeast(0f)
+        camX = camX.coerceIn(-maxPanX, maxPanX)
+        camY = camY.coerceIn(-maxPanY, maxPanY)
+    }
+
     override fun surfaceCreated(holder: SurfaceHolder) {
         screenW = width.toFloat().coerceAtLeast(800f)
         screenH = height.toFloat().coerceAtLeast(480f)
+        clampCameraToIsland()
         resume()
     }
 
     override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {
         screenW = width.toFloat().coerceAtLeast(800f)
         screenH = height.toFloat().coerceAtLeast(480f)
+        clampCameraToIsland()
     }
 
     override fun surfaceDestroyed(holder: SurfaceHolder) {
@@ -584,15 +779,12 @@ class GameView(context: Context) : SurfaceView(context), SurfaceHolder.Callback,
     private fun updateGame() {
         animTickGlobal += 1f
 
-        // 1. Update Loading Screen
         if (isLoadingScreen) {
             if (loadingProgress < 100f) {
-                loadingProgress = (loadingProgress + 1.45f).coerceAtMost(100f)
+                loadingProgress = (loadingProgress + 1.6f).coerceAtMost(100f)
                 if (loadingProgress.toInt() % 28 == 0) {
                     loadingTipIndex = (loadingTipIndex + 1) % loadingTips.size
                 }
-            } else {
-                loadingReadyToEnter = true
             }
             for (e in splashEmbers) {
                 e.x += e.vx
@@ -607,11 +799,10 @@ class GameView(context: Context) : SurfaceView(context), SurfaceHolder.Callback,
 
         if (statusBannerTimer > 0) statusBannerTimer--
 
-        // 2. Update Floating Texts & Ambient Particles
         val ftIter = floatTexts.iterator()
         while (ftIter.hasNext()) {
             val ft = ftIter.next()
-            ft.sy -= 1.25f
+            ft.sy -= 1.3f
             ft.life--
             if (ft.life <= 0) floatTexts.remove(ft)
         }
@@ -625,8 +816,25 @@ class GameView(context: Context) : SurfaceView(context), SurfaceHolder.Callback,
             if (p.life <= 0) ambientParticles.remove(p)
         }
 
-        // 3. Home Farm Logic & Living Animations
         if (!inRaidMode) {
+            // Update Wild Obstacle Clearing
+            val obsIter = wildObstacles.iterator()
+            while (obsIter.hasNext()) {
+                val ob = obsIter.next()
+                if (ob.clearTicksLeft > 0) {
+                    ob.clearTicksLeft--
+                    if (ob.clearTicksLeft == 0) {
+                        gems += ob.type.rewardGems
+                        greenElixir += ob.type.rewardElixir
+                        val sx = isoToScreenX(ob.gx.toFloat(), ob.gy.toFloat())
+                        val sy = isoToScreenY(ob.gx.toFloat(), ob.gy.toFloat())
+                        floatTexts.add(FloatText("💎 +${ob.type.rewardGems} جوهرة | 🧪 +${ob.type.rewardElixir}", sx, sy - 30f, Color.parseColor("#00E676")))
+                        wildObstacles.remove(ob)
+                        saveVillage()
+                    }
+                }
+            }
+
             for (b in myBuildings) {
                 if (b.tapBounce > 0f) b.tapBounce = (b.tapBounce - 0.08f).coerceAtLeast(0f)
 
@@ -639,17 +847,17 @@ class GameView(context: Context) : SurfaceView(context), SurfaceHolder.Callback,
                         b.tapBounce = 1.0f
                         val sx = isoToScreenX(b.gx.toFloat(), b.gy.toFloat())
                         val sy = isoToScreenY(b.gx.toFloat(), b.gy.toFloat())
-                        floatTexts.add(FloatText("⭐ اكتملت الترقية للمستوى ${b.level}!", sx, sy - 45f, Color.parseColor("#00E676")))
+                        floatTexts.add(FloatText("⭐ تمت الترقية للمستوى ${b.level}!", sx, sy - 50f, Color.parseColor("#00E676")))
+                        checkQuestProgression()
                         saveVillage()
                     }
                     continue
                 }
 
-                // Production timers
                 if (b.type in listOf(BType.WHEAT_FIELD, BType.RANCH_BARN, BType.WINDMILL_BAKERY, BType.GREEN_ELIXIR, BType.GOLD_SILO, BType.FIELD_KITCHEN)) {
                     if (!b.readyCollect) {
                         b.prodTimer++
-                        val needed = (230 - b.level * 35).coerceAtLeast(100)
+                        val needed = (200 - b.level * 35).coerceAtLeast(85)
                         if (b.prodTimer >= needed) {
                             b.readyCollect = true
                             b.prodTimer = 0
@@ -657,43 +865,41 @@ class GameView(context: Context) : SurfaceView(context), SurfaceHolder.Callback,
                     }
                 }
 
-                // Spawn ambient particles (Chimney smoke for Manor/Kitchen, Green Bubbles for Bio-Elixir!)
-                if (animTickGlobal.toInt() % 14 == (b.id % 14)) {
+                if (animTickGlobal.toInt() % 18 == (b.id % 18)) {
                     val sx = isoToScreenX(b.gx + 0.5f, b.gy + 0.5f)
                     val sy = isoToScreenY(b.gx + 0.5f, b.gy + 0.5f)
                     if (b.type == BType.MANOR_HALL || b.type == BType.FIELD_KITCHEN) {
                         ambientParticles.add(
                             AmbientParticle(
-                                sx = sx + (Random.nextFloat() - 0.5f) * 16f,
+                                sx = sx + (Random.nextFloat() - 0.5f) * 14f,
                                 sy = sy - 58f * camZoom,
-                                vx = (Random.nextFloat() - 0.3f) * 0.6f,
-                                vy = -0.9f - Random.nextFloat() * 0.5f,
-                                radius = 6f + Random.nextFloat() * 5f,
-                                color = Color.argb(150, 235, 235, 240),
-                                life = 40,
-                                maxLife = 40
+                                vx = (Random.nextFloat() - 0.3f) * 0.5f,
+                                vy = -0.9f - Random.nextFloat() * 0.4f,
+                                radius = 5f + Random.nextFloat() * 4f,
+                                color = Color.argb(140, 240, 240, 245),
+                                life = 36,
+                                maxLife = 36
                             )
                         )
                     } else if (b.type == BType.GREEN_ELIXIR || b.type == BType.EMERALD_TOWER) {
                         ambientParticles.add(
                             AmbientParticle(
-                                sx = sx + (Random.nextFloat() - 0.5f) * 24f,
-                                sy = sy - 26f * camZoom,
-                                vx = (Random.nextFloat() - 0.5f) * 0.5f,
-                                vy = -1.1f - Random.nextFloat() * 0.6f,
-                                radius = 4f + Random.nextFloat() * 4f,
+                                sx = sx + (Random.nextFloat() - 0.5f) * 18f,
+                                sy = sy - 30f * camZoom,
+                                vx = (Random.nextFloat() - 0.5f) * 0.4f,
+                                vy = -1.1f - Random.nextFloat() * 0.5f,
+                                radius = 3.5f + Random.nextFloat() * 3.5f,
                                 color = Color.parseColor("#00E676"),
-                                life = 34,
-                                maxLife = 34
+                                life = 30,
+                                maxLife = 30
                             )
                         )
                     }
                 }
             }
 
-            // Update Roaming Farm Workers
             for (w in villageWorkers) {
-                w.animPhase += 0.25f
+                w.animPhase += 0.24f
                 if (w.waitTicks > 0) {
                     w.waitTicks--
                     continue
@@ -702,15 +908,12 @@ class GameView(context: Context) : SurfaceView(context), SurfaceHolder.Callback,
                 val dy = w.targetGy - w.gy
                 val dist = hypot(dx, dy)
                 if (dist < 0.25f) {
-                    w.waitTicks = 35 + Random.nextInt(45)
+                    w.waitTicks = 40 + Random.nextInt(45)
                     val targetB = myBuildings.randomOrNull()
                     if (targetB != null) {
                         w.targetGx = targetB.gx.toFloat() + 0.5f
                         w.targetGy = targetB.gy.toFloat() + 0.5f
                         w.carryType = (w.carryType + 1) % 3
-                    } else {
-                        w.targetGx = 3f + Random.nextFloat() * 8f
-                        w.targetGy = 3f + Random.nextFloat() * 8f
                     }
                 } else {
                     w.gx += (dx / dist) * 0.035f
@@ -724,20 +927,19 @@ class GameView(context: Context) : SurfaceView(context), SurfaceHolder.Callback,
 
     // ==================== RAID BATTLE LOGIC ====================
     private fun startRaidBattle(isGuildWar: Boolean = false) {
-        val neededRations = getRequiredRationsForArmy()
-        if (armyRations < neededRations) {
-            showBanner("⚠️ تحتاج إلى $neededRations مؤونة جيش 🍗 للهجوم! اطبخ وجبات في مطبخ المزرعة أولاً!")
-            activeModal = ModalType.KITCHEN_RATIONS
-            return
-        }
         val totalUnits = armyRoster.values.sum()
         if (totalUnits <= 0) {
-            showBanner("⚠️ جيشك فارغ! درّب وحدات في معسكر المزارعين أولاً!")
+            showBanner("⚠️ جيشك فارغ (0 جنود)! ابنِ معسكر التدريب ودرّب قواتك أولاً!")
             activeModal = ModalType.ARMY_TRAIN
             return
         }
+        val neededRations = getRequiredRationsForArmy()
+        if (armyRations < neededRations) {
+            showBanner("⚠️ تحتاج إلى $neededRations مؤونة جيش 🍗 للهجوم! اطبخ وجبات في مطبخ الجيش أولاً!")
+            activeModal = ModalType.KITCHEN_RATIONS
+            return
+        }
 
-        // Deduct marching rations
         armyRations -= neededRations
         saveVillage()
 
@@ -761,9 +963,9 @@ class GameView(context: Context) : SurfaceView(context), SurfaceHolder.Callback,
         }
         raidTargetName = enemyNames.random()
         val enemyTier = getManorHallLevel().coerceIn(1, 3)
-        raidLootGold = 800 + enemyTier * 450 + Random.nextInt(350)
-        raidLootElixir = 750 + enemyTier * 420 + Random.nextInt(350)
-        raidLootRations = 35 + enemyTier * 20
+        raidLootGold = 850 + enemyTier * 450 + Random.nextInt(350)
+        raidLootElixir = 800 + enemyTier * 420 + Random.nextInt(350)
+        raidLootRations = 40 + enemyTier * 20
 
         var idG = 100
         fun addRB(t: BType, x: Int, y: Int, lv: Int) {
@@ -772,29 +974,31 @@ class GameView(context: Context) : SurfaceView(context), SurfaceHolder.Callback,
             raidBuildings.add(PlacedBuilding(idG++, t, x, y, cLv, mHp, mHp))
         }
 
+        // Enemy fortress with connected wall ring around its Manor Hall!
         addRB(BType.MANOR_HALL, 6, 6, enemyTier)
-        addRB(BType.GOLD_SILO, 4, 6, enemyTier)
-        addRB(BType.GREEN_ELIXIR, 8, 6, enemyTier)
-        addRB(BType.FIELD_KITCHEN, 6, 4, enemyTier)
-        addRB(BType.CORN_CANNON, 4, 4, enemyTier)
-        addRB(BType.CORN_CANNON, 8, 4, enemyTier)
+        for (wx in 4..9) {
+            addRB(BType.STONE_WALL, wx, 4, enemyTier)
+            addRB(BType.STONE_WALL, wx, 9, enemyTier)
+        }
+        for (wy in 5..8) {
+            addRB(BType.STONE_WALL, 4, wy, enemyTier)
+            addRB(BType.STONE_WALL, 9, wy, enemyTier)
+        }
+        addRB(BType.CORN_CANNON, 5, 5, enemyTier)
+        addRB(BType.CORN_CANNON, 8, 5, enemyTier)
+        addRB(BType.GOLD_SILO, 6, 1, enemyTier)
+        addRB(BType.GREEN_ELIXIR, 10, 6, enemyTier)
+        addRB(BType.FIELD_KITCHEN, 2, 6, enemyTier)
         if (enemyTier >= 2) {
-            addRB(BType.RANCH_BARN, 4, 8, enemyTier)
-            addRB(BType.WINDMILL_BAKERY, 8, 8, enemyTier)
+            addRB(BType.RANCH_BARN, 2, 9, enemyTier)
+            addRB(BType.WINDMILL_BAKERY, 10, 9, enemyTier)
         }
         if (enemyTier >= 3) {
             addRB(BType.EMERALD_TOWER, 6, 8, 3)
-            addRB(BType.HONEY_MORTAR, 6, 5, 3)
-        } else {
-            addRB(BType.CORN_CANNON, 6, 8, enemyTier)
-        }
-        for (wx in 3..9) {
-            addRB(BType.STONE_WALL, wx, 3, enemyTier)
-            addRB(BType.STONE_WALL, wx, 9, enemyTier)
+            addRB(BType.HONEY_MORTAR, 7, 5, 3)
         }
         raidTotalStartBuildings = raidBuildings.count { it.type != BType.STONE_WALL }.coerceAtLeast(1)
-        val buffMsg = if (attackBuffPercent > 0) " (+$attackBuffPercent% قوة هجوم من وليمة المطبخ!)" else ""
-        showBanner("⚔️ استهلك الجيش $neededRations مؤونة 🍗! انقر على أطراف الجزيرة لإنزال قواتك$buffMsg")
+        showBanner("⚔️ انقر على أطراف الجزيرة الخضراء لإنزال جيشك وكسر أسوار العدو!")
     }
 
     private fun updateRaidBattle() {
@@ -804,7 +1008,6 @@ class GameView(context: Context) : SurfaceView(context), SurfaceHolder.Callback,
             return
         }
 
-        // Update Spells
         val spIter = activeSpells.iterator()
         while (spIter.hasNext()) {
             val sp = spIter.next()
@@ -812,14 +1015,13 @@ class GameView(context: Context) : SurfaceView(context), SurfaceHolder.Callback,
             if (sp.type == SpellType.GREEN_NECTAR && sp.ticksLeft % 15 == 0) {
                 for (u in activeUnits) {
                     if (hypot(u.gx - sp.gx, u.gy - sp.gy) <= sp.radius) {
-                        u.hp = (u.hp + 40).coerceAtMost(u.maxHp)
+                        u.hp = (u.hp + 42).coerceAtMost(u.maxHp)
                     }
                 }
             }
             if (sp.ticksLeft <= 0) activeSpells.remove(sp)
         }
 
-        // Update Active Units
         val uIter = activeUnits.iterator()
         while (uIter.hasNext()) {
             val u = uIter.next()
@@ -861,7 +1063,7 @@ class GameView(context: Context) : SurfaceView(context), SurfaceHolder.Callback,
                             target.hp -= finalDmg
                             checkBuildingDestroyed(target)
                         }
-                        u.cooldown = 26
+                        u.cooldown = 25
                     } else {
                         u.cooldown--
                     }
@@ -873,7 +1075,6 @@ class GameView(context: Context) : SurfaceView(context), SurfaceHolder.Callback,
             }
         }
 
-        // Update Enemy Defenses
         for (b in raidBuildings) {
             if (b.recoilAnim > 0f) b.recoilAnim = (b.recoilAnim - 0.1f).coerceAtLeast(0f)
             if (!b.type.isDefense || b.hp <= 0) continue
@@ -903,11 +1104,10 @@ class GameView(context: Context) : SurfaceView(context), SurfaceHolder.Callback,
             }
         }
 
-        // Update Projectiles
         val pIter = projectiles.iterator()
         while (pIter.hasNext()) {
             val p = pIter.next()
-            p.progress += 0.12f
+            p.progress += 0.13f
             p.curGx = p.startGx + (p.targetGx - p.startGx) * p.progress
             p.curGy = p.startGy + (p.targetGy - p.startGy) * p.progress
             if (p.progress >= 1f) {
@@ -978,12 +1178,13 @@ class GameView(context: Context) : SurfaceView(context), SurfaceHolder.Callback,
 
     private fun endRaidBattle() {
         inRaidMode = false
+        hasCompletedFirstRaid = true
         activeUnits.clear()
         projectiles.clear()
         activeSpells.clear()
         attackBuffPercent = 0
 
-        val ratio = (raidDestructionPct / 100f).coerceAtLeast(if (raidStars > 0) 0.45f else 0.1f)
+        val ratio = (raidDestructionPct / 100f).coerceAtLeast(if (raidStars > 0) 0.45f else 0.15f)
         val wonGold = (raidLootGold * ratio).toInt()
         val wonElixir = (raidLootElixir * ratio).toInt()
         val wonRations = (raidLootRations * ratio).toInt()
@@ -992,26 +1193,27 @@ class GameView(context: Context) : SurfaceView(context), SurfaceHolder.Callback,
         armyRations += wonRations
 
         if (raidStars > 0) {
-            val gainedTrophies = raidStars * 10
-            trophies += gainedTrophies
+            trophies += raidStars * 10
             warOurStars += raidStars
             showBanner("🏆 انتصار (${raidStars}⭐)! غنمت +$wonGold ذهب و +$wonElixir إكسير أخضر و +$wonRations مؤونة 🍗")
         } else {
-            trophies = (trophies - 5).coerceAtLeast(0)
-            showBanner("🛡️ انتهت الغارة (${raidDestructionPct}%)! غنمت +$wonGold ذهب و +$wonElixir إكسير أخضر")
+            showBanner("🛡️ انتهت الغارة (${raidDestructionPct}%)! غنمت +$wonGold ذهب و +$wonElixir إكسير")
         }
+        checkQuestProgression()
         saveVillage()
     }
 
     private fun showBanner(msg: String) {
         statusBanner = msg
-        statusBannerTimer = 200
+        statusBannerTimer = 190
     }
 
     // ==================== RENDERING PIPELINE ====================
     private fun drawGame() {
         val canvas = holder.lockCanvas() ?: return
         try {
+            bitmapPaint.alpha = 255
+            paint.alpha = 255
             if (isLoadingScreen) {
                 drawProfessionalLoadingScreen(canvas)
             } else {
@@ -1019,8 +1221,7 @@ class GameView(context: Context) : SurfaceView(context), SurfaceHolder.Callback,
                 drawIsoGridAndEntities(canvas)
                 drawAmbientAndProjectiles(canvas)
                 drawFloatTexts(canvas)
-                drawTopSupercellHUD(canvas)
-                drawBottomActionBar(canvas)
+                drawSupercellCornerHUD(canvas)
                 if (activeModal != ModalType.NONE) {
                     drawActiveModal(canvas)
                 }
@@ -1032,13 +1233,11 @@ class GameView(context: Context) : SurfaceView(context), SurfaceHolder.Callback,
 
     private fun drawProfessionalLoadingScreen(canvas: Canvas) {
         canvas.drawColor(Color.parseColor("#0D1F12"))
-        val sp = splashBg
-        if (sp != null) {
-            val dst = RectF(0f, 0f, screenW, screenH)
-            canvas.drawBitmap(sp, null, dst, paint)
+        splashBg?.let { sp ->
+            bitmapPaint.alpha = 255
+            canvas.drawBitmap(sp, null, RectF(0f, 0f, screenW, screenH), bitmapPaint)
         }
 
-        // Animated floating glowing emerald & gold embers
         for (e in splashEmbers) {
             paint.style = Paint.Style.FILL
             paint.color = e.color
@@ -1047,76 +1246,62 @@ class GameView(context: Context) : SurfaceView(context), SurfaceHolder.Callback,
         }
         paint.alpha = 255
 
-        // Dark translucent bottom overlay for custom interactive loading bar & tips
-        val barPanel = RectF(screenW * 0.16f, screenH * 0.78f, screenW * 0.84f, screenH * 0.96f)
+        val barPanel = RectF(screenW * 0.18f, screenH * 0.79f, screenW * 0.82f, screenH * 0.96f)
         drawGlossyPanel(canvas, barPanel, Color.parseColor("#DD102818"), Color.parseColor("#00E676"))
 
         val pct = loadingProgress.toInt().coerceIn(0, 100)
-        val stageText = when {
-            pct < 30 -> "Loading 2.5D Isometric Farm Assets... ($pct%)"
-            pct < 65 -> "Initializing Green Bio-Elixir Pumps & Field Kitchen... ($pct%)"
-            pct < 99 -> "Preparing Manor Hall Tiers & Guild Servers... ($pct%)"
-            else -> "✅ FARM WARS Ready! اضغط في أي مكان لدخول المزرعة"
-        }
+        val stageText = if (pct < 100) "Loading FARM WARS 2.5D World... ($pct%)" else "✅ اضغط في أي مكان لبدء رحلة تأسيس مزرعتك!"
+        drawOutlinedText(canvas, stageText, screenW * 0.5f, barPanel.top + 30f, 19f, Color.parseColor("#A5D6A7"))
 
-        drawOutlinedText(canvas, stageText, screenW * 0.5f, barPanel.top + 32f, 21f, Color.parseColor("#A5D6A7"))
-
-        // Progress Bar Track
-        val track = RectF(barPanel.left + 36f, barPanel.top + 46f, barPanel.right - 36f, barPanel.top + 78f)
+        val track = RectF(barPanel.left + 36f, barPanel.top + 42f, barPanel.right - 36f, barPanel.top + 72f)
         paint.color = Color.parseColor("#08140C")
-        canvas.drawRoundRect(track, 16f, 16f, paint)
+        canvas.drawRoundRect(track, 15f, 15f, paint)
 
         val fillW = (track.width() * (loadingProgress / 100f)).coerceAtLeast(18f)
         val fillRect = RectF(track.left, track.top, track.left + fillW, track.bottom)
-        val barGrad = LinearGradient(fillRect.left, fillRect.top, fillRect.left, fillRect.bottom,
+        paint.shader = LinearGradient(fillRect.left, fillRect.top, fillRect.left, fillRect.bottom,
             Color.parseColor("#69F0AE"), Color.parseColor("#00C853"), Shader.TileMode.CLAMP)
-        paint.shader = barGrad
-        canvas.drawRoundRect(fillRect, 16f, 16f, paint)
+        canvas.drawRoundRect(fillRect, 15f, 15f, paint)
         paint.shader = null
 
         paint.style = Paint.Style.STROKE
         paint.strokeWidth = 2.5f
         paint.color = Color.parseColor("#FFD54F")
-        canvas.drawRoundRect(track, 16f, 16f, paint)
+        canvas.drawRoundRect(track, 15f, 15f, paint)
         paint.style = Paint.Style.FILL
 
-        // Tip text
-        drawOutlinedText(canvas, loadingTips[loadingTipIndex], screenW * 0.5f, barPanel.bottom - 14f, 18f, Color.WHITE)
+        drawOutlinedText(canvas, loadingTips[loadingTipIndex], screenW * 0.5f, barPanel.bottom - 12f, 16f, Color.WHITE)
     }
 
     private fun drawIslandBackground(canvas: Canvas) {
-        canvas.drawColor(Color.parseColor("#147A85"))
+        canvas.drawColor(Color.parseColor("#1E4620"))
         val bg = islandBg
         if (bg != null) {
-            val baseW = screenW * 1.28f * camZoom
-            val baseH = screenH * 1.28f * camZoom
+            clampCameraToIsland()
+            val bgScale = 1.28f * camZoom
+            val baseW = screenW * bgScale
+            val baseH = screenH * bgScale
             val left = (screenW - baseW) * 0.5f + camX
-            val top = (screenH - baseH) * 0.44f + camY
-            val dst = RectF(left, top, left + baseW, top + baseH)
-            canvas.drawBitmap(bg, null, dst, paint)
+            val top = (screenH - baseH) * 0.5f + camY
+            bitmapPaint.alpha = 255
+            canvas.drawBitmap(bg, null, RectF(left, top, left + baseW, top + baseH), bitmapPaint)
         }
     }
 
     private fun drawIsoGridAndEntities(canvas: Canvas) {
-        // Draw subtle isometric grid lines on the central clearing
-        paint.style = Paint.Style.STROKE
-        paint.strokeWidth = 1.2f
-        paint.color = if (buildModeType != null || moveBuildingMode) Color.argb(115, 105, 240, 174) else Color.argb(36, 255, 255, 255)
-
-        for (i in 0..gridSize) {
-            val x1 = isoToScreenX(i.toFloat(), 0f)
-            val y1 = isoToScreenY(i.toFloat(), 0f)
-            val x2 = isoToScreenX(i.toFloat(), gridSize.toFloat())
-            val y2 = isoToScreenY(i.toFloat(), gridSize.toFloat())
-            canvas.drawLine(x1, y1, x2, y2, paint)
-
-            val x3 = isoToScreenX(0f, i.toFloat())
-            val y3 = isoToScreenY(0f, i.toFloat())
-            val x4 = isoToScreenX(gridSize.toFloat(), i.toFloat())
-            val y4 = isoToScreenY(gridSize.toFloat(), i.toFloat())
-            canvas.drawLine(x3, y3, x4, y4, paint)
+        val showFullGrid = (buildModeType != null || moveBuildingMode)
+        if (showFullGrid) {
+            paint.style = Paint.Style.STROKE
+            paint.strokeWidth = 1.6f
+            paint.color = Color.argb(135, 105, 240, 174)
+            for (i in 0..gridSize) {
+                canvas.drawLine(isoToScreenX(i.toFloat(), 0f), isoToScreenY(i.toFloat(), 0f),
+                    isoToScreenX(i.toFloat(), gridSize.toFloat()), isoToScreenY(i.toFloat(), gridSize.toFloat()), paint)
+                canvas.drawLine(isoToScreenX(0f, i.toFloat()), isoToScreenY(0f, i.toFloat()),
+                    isoToScreenX(gridSize.toFloat(), i.toFloat()), isoToScreenY(gridSize.toFloat(), i.toFloat()), paint)
+            }
+            paint.style = Paint.Style.FILL
         }
-        paint.style = Paint.Style.FILL
 
         // Draw active spell rings
         for (sp in activeSpells) {
@@ -1124,7 +1309,8 @@ class GameView(context: Context) : SurfaceView(context), SurfaceHolder.Callback,
             val sy = isoToScreenY(sp.gx, sp.gy)
             val rx = sp.radius * tileW * 0.45f * camZoom
             val ry = sp.radius * tileH * 0.45f * camZoom
-            paint.color = (sp.type.color and 0x00FFFFFF) or 0x55000000
+            paint.style = Paint.Style.FILL
+            paint.color = (sp.type.color and 0x00FFFFFF) or 0x44000000
             canvas.drawOval(RectF(sx - rx, sy - ry, sx + rx, sy + ry), paint)
             paint.style = Paint.Style.STROKE
             paint.strokeWidth = 3.5f
@@ -1132,31 +1318,220 @@ class GameView(context: Context) : SurfaceView(context), SurfaceHolder.Callback,
             canvas.drawOval(RectF(sx - rx, sy - ry, sx + rx, sy + ry), paint)
             paint.style = Paint.Style.FILL
         }
+        paint.alpha = 255
 
-        // Depth-sort buildings, roaming workers, and battle units by (gx + gy)
         val bList = if (inRaidMode) raidBuildings else myBuildings
-        data class RenderItem(val depth: Float, val kind: Int, val b: PlacedBuilding?, val u: ActiveUnit?, val w: VillageWorker?)
-        val items = ArrayList<RenderItem>(bList.size + activeUnits.size + villageWorkers.size)
+        // Build fast lookup map of all walls so adjacent walls auto-connect seamlessly!
+        val wallMap = HashMap<Pair<Int, Int>, PlacedBuilding>()
         for (b in bList) {
-            items.add(RenderItem((b.gx + b.gy + b.type.footprint).toFloat(), 0, b, null, null))
+            if (b.type == BType.STONE_WALL) {
+                wallMap[Pair(b.gx, b.gy)] = b
+            }
+        }
+
+        data class RenderItem(
+            val depth: Float,
+            val kind: Int, // 0=building, 1=unit, 2=worker, 3=obstacle
+            val b: PlacedBuilding? = null,
+            val u: ActiveUnit? = null,
+            val w: VillageWorker? = null,
+            val ob: WildObstacle? = null
+        )
+        val items = ArrayList<RenderItem>(bList.size + activeUnits.size + villageWorkers.size + wildObstacles.size)
+        for (b in bList) {
+            items.add(RenderItem((b.gx + b.gy + b.type.footprint * 0.6f), 0, b = b))
         }
         if (!inRaidMode) {
+            for (ob in wildObstacles) {
+                items.add(RenderItem((ob.gx + ob.gy + 0.8f), 3, ob = ob))
+            }
             for (w in villageWorkers) {
-                items.add(RenderItem(w.gx + w.gy, 2, null, null, w))
+                items.add(RenderItem(w.gx + w.gy, 2, w = w))
             }
         }
         for (u in activeUnits) {
-            items.add(RenderItem(u.gx + u.gy, 1, null, u, null))
+            items.add(RenderItem(u.gx + u.gy, 1, u = u))
         }
         items.sortBy { it.depth }
 
         for (item in items) {
             when (item.kind) {
-                0 -> item.b?.let { drawBuilding25D(canvas, it) }
+                0 -> item.b?.let {
+                    if (it.type == BType.STONE_WALL) {
+                        drawConnectedWall25D(canvas, it, wallMap)
+                    } else {
+                        drawBuilding25D(canvas, it)
+                    }
+                }
                 1 -> item.u?.let { drawUnit25D(canvas, it) }
                 2 -> item.w?.let { drawVillageWorker25D(canvas, it) }
+                3 -> item.ob?.let { drawWildObstacle25D(canvas, it) }
             }
         }
+    }
+
+    // ==================== AUTO-CONNECTING 2.5D ISOMETRIC WALL SYSTEM ====================
+    private fun drawConnectedWall25D(canvas: Canvas, b: PlacedBuilding, wallMap: Map<Pair<Int, Int>, PlacedBuilding>) {
+        val sx = isoToScreenX(b.gx + 0.5f, b.gy + 0.5f)
+        val sy = isoToScreenY(b.gx + 0.5f, b.gy + 0.5f)
+
+        val hasXPrev = wallMap.containsKey(Pair(b.gx - 1, b.gy))
+        val hasXNext = wallMap.containsKey(Pair(b.gx + 1, b.gy))
+        val hasYPrev = wallMap.containsKey(Pair(b.gx, b.gy - 1))
+        val hasYNext = wallMap.containsKey(Pair(b.gx, b.gy + 1))
+
+        val connectsX = hasXPrev || hasXNext
+        val connectsY = hasYPrev || hasYNext
+        val isCornerOrIntersection = (connectsX && connectsY) || (!connectsX && !connectsY)
+
+        // 1. Draw seamless 3D isometric connecting wall beams to (gx+1, gy) and (gx, gy+1) so there are ZERO gaps!
+        val wallHeight = (22f + b.level * 4f) * camZoom
+        val wallThick = 9f * camZoom
+        val bodyColor = when (b.level) {
+            1 -> Color.parseColor("#6D4C41")
+            2 -> Color.parseColor("#607D8B")
+            else -> Color.parseColor("#1B5E20")
+        }
+        val topColor = when (b.level) {
+            1 -> Color.parseColor("#A1887F")
+            2 -> Color.parseColor("#B0BEC5")
+            else -> Color.parseColor("#00E676")
+        }
+
+        if (hasXNext) {
+            val nx = isoToScreenX(b.gx + 1.5f, b.gy + 0.5f)
+            val ny = isoToScreenY(b.gx + 1.5f, b.gy + 0.5f)
+            drawIsometricWallBeam(canvas, sx, sy, nx, ny, wallHeight, wallThick, bodyColor, topColor)
+        }
+        if (hasYNext) {
+            val nx = isoToScreenX(b.gx + 0.5f, b.gy + 1.5f)
+            val ny = isoToScreenY(b.gx + 0.5f, b.gy + 1.5f)
+            drawIsometricWallBeam(canvas, sx, sy, nx, ny, wallHeight, wallThick, bodyColor, topColor)
+        }
+
+        // 2. Choose the exact 2.5D sprite for this wall tile (Corner Watchtower, Gate, or Directional Wall!)
+        val isGateSpot = (b.gx == 6 && connectsX && !connectsY) || (b.gy == 6 && connectsY && !connectsX)
+        val spriteKey = when {
+            isCornerOrIntersection -> if (b.level == 1) "wall_corner_lv1" else "wall_corner_lv2"
+            isGateSpot && connectsX -> "wall_gate_flip"
+            isGateSpot && connectsY -> "wall_gate"
+            connectsX && !connectsY -> when (b.level) {
+                1 -> "wall_lv1_flip"
+                2 -> "wall_lv2_flip"
+                else -> "wall_lv3_flip"
+            }
+            else -> when (b.level) {
+                1 -> "wall_lv1"
+                2 -> "wall_lv2"
+                else -> "wall_lv3"
+            }
+        }
+
+        val bmp = bitmaps[spriteKey] ?: bitmaps["stone_wall"]
+        if (bmp != null) {
+            val scale = (if (isCornerOrIntersection) 0.92f else 1.08f) * camZoom * (1.0f + b.tapBounce * 0.12f)
+            val drawW = tileW * scale
+            val drawH = drawW * (bmp.height.toFloat() / bmp.width.toFloat().coerceAtLeast(1f))
+            val dst = RectF(
+                sx - drawW * 0.5f,
+                sy - drawH * 0.78f + tileH * 0.22f * camZoom,
+                sx + drawW * 0.5f,
+                sy + tileH * 0.22f * camZoom
+            )
+            bitmapPaint.alpha = 255
+            canvas.drawBitmap(bmp, null, dst, bitmapPaint)
+        }
+
+        if (selectedBuilding == b) {
+            drawIsoDiamondTile(canvas, b.gx.toFloat(), b.gy.toFloat(), 1,
+                Color.argb(95, 0, 230, 118), Color.parseColor("#00E676"))
+        }
+    }
+
+    private fun drawIsometricWallBeam(
+        canvas: Canvas,
+        x1: Float,
+        y1: Float,
+        x2: Float,
+        y2: Float,
+        wallH: Float,
+        thick: Float,
+        bodyColor: Int,
+        topColor: Int
+    ) {
+        // Vertical wall face between (x1, y1) and (x2, y2)
+        path.reset()
+        path.moveTo(x1, y1)
+        path.lineTo(x2, y2)
+        path.lineTo(x2, y2 - wallH)
+        path.lineTo(x1, y1 - wallH)
+        path.close()
+        paint.style = Paint.Style.FILL
+        paint.color = bodyColor
+        canvas.drawPath(path, paint)
+
+        // Top battlement walkway
+        path.reset()
+        path.moveTo(x1 - thick * 0.5f, y1 - wallH)
+        path.lineTo(x2 - thick * 0.5f, y2 - wallH)
+        path.lineTo(x2 + thick * 0.5f, y2 - wallH - thick * 0.4f)
+        path.lineTo(x1 + thick * 0.5f, y1 - wallH - thick * 0.4f)
+        path.close()
+        paint.color = topColor
+        canvas.drawPath(path, paint)
+        paint.alpha = 255
+    }
+
+    private fun drawWildObstacle25D(canvas: Canvas, ob: WildObstacle) {
+        val sx = isoToScreenX(ob.gx + 0.5f, ob.gy + 0.5f)
+        val sy = isoToScreenY(ob.gx + 0.5f, ob.gy + 0.5f)
+
+        paint.style = Paint.Style.FILL
+        paint.color = Color.argb(45, 0, 0, 0)
+        canvas.drawOval(RectF(sx - 24f * camZoom, sy - 10f * camZoom, sx + 24f * camZoom, sy + 12f * camZoom), paint)
+        paint.alpha = 255
+
+        bitmaps[ob.type.spriteKey]?.let { bmp ->
+            val drawW = tileW * 1.15f * camZoom
+            val drawH = drawW * (bmp.height.toFloat() / bmp.width.toFloat().coerceAtLeast(1f))
+            val dst = RectF(sx - drawW * 0.5f, sy - drawH * 0.72f + 8f * camZoom, sx + drawW * 0.5f, sy + 8f * camZoom)
+            bitmapPaint.alpha = 255
+            canvas.drawBitmap(bmp, null, dst, bitmapPaint)
+        }
+
+        if (ob.clearTicksLeft > 0) {
+            val sec = (ob.clearTicksLeft / 30) + 1
+            drawOutlinedText(canvas, "⛏️ إزالة (${sec}ث)...", sx, sy - 38f * camZoom, 12.5f * camZoom, Color.parseColor("#FFD54F"))
+        }
+    }
+
+    private fun drawIsoDiamondTile(canvas: Canvas, gx: Float, gy: Float, fp: Int, fillColor: Int, strokeColor: Int) {
+        val topX = isoToScreenX(gx, gy)
+        val topY = isoToScreenY(gx, gy)
+        val rightX = isoToScreenX(gx + fp, gy)
+        val rightY = isoToScreenY(gx + fp, gy)
+        val botX = isoToScreenX(gx + fp, gy + fp)
+        val botY = isoToScreenY(gx + fp, gy + fp)
+        val leftX = isoToScreenX(gx, gy + fp)
+        val leftY = isoToScreenY(gx, gy + fp)
+
+        path.reset()
+        path.moveTo(topX, topY)
+        path.lineTo(rightX, rightY)
+        path.lineTo(botX, botY)
+        path.lineTo(leftX, leftY)
+        path.close()
+
+        paint.style = Paint.Style.FILL
+        paint.color = fillColor
+        canvas.drawPath(path, paint)
+
+        paint.style = Paint.Style.STROKE
+        paint.strokeWidth = 2f * camZoom
+        paint.color = strokeColor
+        canvas.drawPath(path, paint)
+        paint.style = Paint.Style.FILL
+        paint.alpha = 255
     }
 
     private fun drawBuilding25D(canvas: Canvas, b: PlacedBuilding) {
@@ -1166,115 +1541,87 @@ class GameView(context: Context) : SurfaceView(context), SurfaceHolder.Callback,
         val sx = isoToScreenX(centerGx, centerGy)
         val sy = isoToScreenY(centerGx, centerGy)
 
-        // Selection or Upgrade Level Base Platform Ring
         if (selectedBuilding == b) {
-            paint.style = Paint.Style.STROKE
-            paint.strokeWidth = 4f
-            paint.color = Color.parseColor("#00E676")
-            val rx = fp * tileW * 0.48f * camZoom
-            val ry = fp * tileH * 0.48f * camZoom
-            canvas.drawOval(RectF(sx - rx, sy - ry, sx + rx, sy + ry), paint)
-            paint.style = Paint.Style.FILL
-        } else if (b.level >= 2 && b.type != BType.STONE_WALL) {
-            // Level 2 (Silver/Stone) & Level 3 (Golden-Emerald) glowing aura ring under upgraded buildings!
-            paint.style = Paint.Style.STROKE
-            paint.strokeWidth = 2.5f * camZoom
-            paint.color = if (b.level == 3) Color.argb(145, 0, 230, 118) else Color.argb(110, 255, 213, 79)
-            val rx = fp * tileW * 0.42f * camZoom
-            val ry = fp * tileH * 0.42f * camZoom
-            canvas.drawOval(RectF(sx - rx, sy - ry, sx + rx, sy + ry), paint)
-            paint.style = Paint.Style.FILL
+            drawIsoDiamondTile(canvas, b.gx.toFloat(), b.gy.toFloat(), fp,
+                Color.argb(95, 0, 230, 118), Color.parseColor("#00E676"))
         }
 
-        // Ground shadow
-        paint.color = Color.argb(75, 0, 0, 0)
-        val shW = fp * tileW * 0.42f * camZoom
-        val shH = fp * tileH * 0.40f * camZoom
-        canvas.drawOval(RectF(sx - shW, sy - shH * 0.5f, sx + shW, sy + shH * 1.1f), paint)
+        paint.style = Paint.Style.FILL
+        paint.color = Color.argb(45, 0, 0, 0)
+        val shW = fp * tileW * 0.34f * camZoom
+        val shH = fp * tileH * 0.30f * camZoom
+        canvas.drawOval(RectF(sx - shW, sy - shH * 0.3f, sx + shW, sy + shH * 0.9f), paint)
+        paint.alpha = 255
 
-        // Living animations: subtle breathing pulse + tap bounce + turret recoil + crop sway
-        val breathScale = 1.0f + sin(animTickGlobal * 0.06f + b.id) * 0.014f + b.tapBounce * 0.12f
-        val levelScale = 1.0f + (b.level - 1) * 0.06f
-        val recoilOffset = b.recoilAnim * 8f * camZoom
-        val swaySkewX = if (b.type == BType.WHEAT_FIELD) sin(animTickGlobal * 0.09f + b.id) * 4f * camZoom else 0f
+        val breathScale = 1.0f + sin(animTickGlobal * 0.06f + b.id) * 0.012f + b.tapBounce * 0.12f
+        val levelScale = 1.0f + (b.level - 1) * 0.07f
+        val recoilOffset = b.recoilAnim * 7f * camZoom
+        val swaySkewX = if (b.type == BType.WHEAT_FIELD) sin(animTickGlobal * 0.08f + b.id) * 3.5f * camZoom else 0f
 
         val spriteKey = b.effectiveSpriteKey()
         val bmp = bitmaps[spriteKey]
         if (bmp != null) {
             val scale = when {
-                b.type == BType.MANOR_HALL && b.level == 3 -> 1.55f
-                b.type == BType.MANOR_HALL && b.level == 2 -> 1.42f
-                b.type == BType.MANOR_HALL -> 1.28f
-                b.type == BType.STONE_WALL -> 0.58f
-                fp == 1 -> 0.86f
-                else -> 1.18f
+                b.type == BType.MANOR_HALL && b.level == 3 -> 1.95f
+                b.type == BType.MANOR_HALL && b.level == 2 -> 1.80f
+                b.type == BType.MANOR_HALL -> 1.65f
+                fp == 1 -> 1.15f
+                else -> 1.50f
             } * camZoom * breathScale * levelScale
 
             val drawW = tileW * scale
             val drawH = drawW * (bmp.height.toFloat() / bmp.width.toFloat().coerceAtLeast(1f))
             val dst = RectF(
                 sx - drawW * 0.5f + swaySkewX - recoilOffset,
-                sy - drawH * 0.74f + fp * tileH * 0.18f * camZoom,
+                sy - drawH * 0.76f + fp * tileH * 0.20f * camZoom,
                 sx + drawW * 0.5f + swaySkewX - recoilOffset,
-                sy + fp * tileH * 0.26f * camZoom
+                sy + fp * tileH * 0.24f * camZoom
             )
-            canvas.drawBitmap(bmp, null, dst, paint)
+            bitmapPaint.alpha = 255
+            canvas.drawBitmap(bmp, null, dst, bitmapPaint)
 
-            // Extra Animated Details on Houses & Buildings:
-            // 1. Spinning Windmill Sails on WINDMILL_BAKERY
             if (b.type == BType.WINDMILL_BAKERY) {
-                drawSpinningWindmillBlades(canvas, sx, dst.top + drawH * 0.36f, 28f * camZoom)
+                drawSpinningWindmillBlades(canvas, sx, dst.top + drawH * 0.36f, 30f * camZoom)
             }
-            // 2. Floating Emerald Crystal on EMERALD_TOWER and MANOR_HALL Lv.3
             if (b.type == BType.EMERALD_TOWER || (b.type == BType.MANOR_HALL && b.level == 3)) {
-                val bobY = sin(animTickGlobal * 0.12f + b.id) * 6f * camZoom
-                paint.color = Color.argb(120, 0, 230, 118)
-                canvas.drawCircle(sx, dst.top + 8f * camZoom + bobY, 14f * camZoom, paint)
+                val bobY = sin(animTickGlobal * 0.12f + b.id) * 5f * camZoom
+                paint.style = Paint.Style.FILL
+                paint.color = Color.argb(110, 0, 230, 118)
+                canvas.drawCircle(sx, dst.top + 6f * camZoom + bobY, 13f * camZoom, paint)
                 paint.color = Color.parseColor("#69F0AE")
-                canvas.drawCircle(sx, dst.top + 8f * camZoom + bobY, 6f * camZoom, paint)
-            }
-            // 3. Pulsing Green Glow on GREEN_ELIXIR Pump
-            if (b.type == BType.GREEN_ELIXIR) {
-                val pulseA = (90 + (sin(animTickGlobal * 0.15f + b.id) * 55).toInt()).coerceIn(30, 180)
-                paint.color = Color.argb(pulseA, 0, 230, 118)
-                canvas.drawCircle(sx + 4f * camZoom, dst.centerY(), 18f * camZoom, paint)
-            }
-            // 4. Warm Flickering Oven Glow on FIELD_KITCHEN
-            if (b.type == BType.FIELD_KITCHEN) {
-                val fireA = (80 + Random.nextInt(55))
-                paint.color = Color.argb(fireA, 255, 145, 0)
-                canvas.drawCircle(sx - 6f * camZoom, dst.centerY() + 4f * camZoom, 15f * camZoom, paint)
+                canvas.drawCircle(sx, dst.top + 6f * camZoom + bobY, 5.5f * camZoom, paint)
+                paint.alpha = 255
             }
         }
 
-        // Level Stars & Badge (Lv.1 ⭐, Lv.2 ⭐⭐, Lv.3 ⭐⭐⭐)
-        if (b.type != BType.STONE_WALL) {
+        if (selectedBuilding == b) {
             val starsStr = "⭐".repeat(b.level.coerceIn(1, 3))
-            val badgeY = sy - fp * tileH * 0.78f * camZoom
-            drawOutlinedText(canvas, "${b.type.titleAr} $starsStr", sx, badgeY, 13f * camZoom,
-                if (b.level == 3) Color.parseColor("#69F0AE") else Color.parseColor("#FFF59D"))
+            val badgeY = sy - fp * tileH * 0.96f * camZoom
+            drawOutlinedText(canvas, "${b.type.titleAr} $starsStr", sx, badgeY, 15f * camZoom, Color.parseColor("#69F0AE"))
+        } else if (b.level >= 2) {
+            val starsStr = "⭐".repeat(b.level.coerceIn(1, 3))
+            drawOutlinedText(canvas, starsStr, sx, sy + fp * tileH * 0.30f * camZoom, 11f * camZoom, Color.parseColor("#FFD54F"))
         }
 
-        // Upgrade Progress Bar
         if (b.upgradeTicksLeft > 0 && b.upgradeTotalTicks > 0) {
             val secLeft = (b.upgradeTicksLeft / 30) + 1
             val pct = 1f - (b.upgradeTicksLeft.toFloat() / b.upgradeTotalTicks.toFloat())
-            val barW = 74f * camZoom
-            val barH = 11f * camZoom
-            val by = sy - fp * tileH * 0.98f * camZoom
-            paint.color = Color.parseColor("#AA000000")
+            val barW = 72f * camZoom
+            val barH = 10f * camZoom
+            val by = sy - fp * tileH * 0.90f * camZoom
+            paint.color = Color.parseColor("#CC000000")
             canvas.drawRoundRect(RectF(sx - barW / 2, by, sx + barW / 2, by + barH), 5f, 5f, paint)
             paint.color = Color.parseColor("#00E676")
             canvas.drawRoundRect(RectF(sx - barW / 2, by, sx - barW / 2 + barW * pct, by + barH), 5f, 5f, paint)
-            drawOutlinedText(canvas, "🔨 ترقية ${secLeft}ث", sx, by - 4f, 12f * camZoom, Color.WHITE)
+            paint.alpha = 255
+            drawOutlinedText(canvas, "🔨 ${secLeft}ث", sx, by - 4f, 12f * camZoom, Color.WHITE)
         }
 
-        // Floating Ready-to-Harvest Bubble
         if (!inRaidMode && b.readyCollect) {
-            val bob = sin(animTickGlobal * 0.14f + b.id) * 6f
-            val by = sy - fp * tileH * 0.95f * camZoom + bob
-            val bubbleRect = RectF(sx - 24f * camZoom, by - 24f * camZoom, sx + 24f * camZoom, by + 12f * camZoom)
-            drawGlossyPanel(canvas, bubbleRect, Color.parseColor("#E61B5E20"), Color.parseColor("#00E676"))
+            val bob = sin(animTickGlobal * 0.14f + b.id) * 5f
+            val by = sy - fp * tileH * 0.85f * camZoom + bob
+            val bubbleRect = RectF(sx - 20f * camZoom, by - 22f * camZoom, sx + 20f * camZoom, by + 10f * camZoom)
+            drawGlossyPanel(canvas, bubbleRect, Color.parseColor("#EE1B5E20"), Color.parseColor("#FFD54F"), 12f)
             val icon = when (b.type) {
                 BType.WHEAT_FIELD -> "🌾"
                 BType.RANCH_BARN -> "🥩"
@@ -1284,19 +1631,19 @@ class GameView(context: Context) : SurfaceView(context), SurfaceHolder.Callback,
                 BType.FIELD_KITCHEN -> "🍗"
                 else -> "✨"
             }
-            drawOutlinedText(canvas, icon, sx, by, 18f * camZoom, Color.WHITE)
+            drawOutlinedText(canvas, icon, sx, by, 16f * camZoom, Color.WHITE)
         }
 
-        // Battle HP bar
         if (inRaidMode && b.hp < b.maxHp) {
-            val barW = 58f * camZoom
+            val barW = 56f * camZoom
             val barH = 8f * camZoom
-            val by = sy - fp * tileH * 0.62f * camZoom
+            val by = sy - fp * tileH * 0.65f * camZoom
             val ratio = (b.hp.toFloat() / b.maxHp.toFloat()).coerceIn(0f, 1f)
-            paint.color = Color.parseColor("#AA000000")
+            paint.color = Color.parseColor("#CC000000")
             canvas.drawRoundRect(RectF(sx - barW / 2, by, sx + barW / 2, by + barH), 4f, 4f, paint)
             paint.color = if (ratio > 0.5f) Color.parseColor("#00E676") else Color.parseColor("#FF5252")
             canvas.drawRoundRect(RectF(sx - barW / 2, by, sx - barW / 2 + barW * ratio, by + barH), 4f, 4f, paint)
+            paint.alpha = 255
         }
     }
 
@@ -1314,124 +1661,124 @@ class GameView(context: Context) : SurfaceView(context), SurfaceHolder.Callback,
         }
         paint.color = Color.parseColor("#FFD54F")
         canvas.drawCircle(cx, cy, 4.5f * camZoom, paint)
+        paint.alpha = 255
     }
 
     private fun drawVillageWorker25D(canvas: Canvas, w: VillageWorker) {
         val sx = isoToScreenX(w.gx, w.gy)
         val sy = isoToScreenY(w.gx, w.gy)
-        val bob = abs(sin(w.animPhase)) * 4f * camZoom
+        val bob = abs(sin(w.animPhase)) * 3.5f * camZoom
 
-        // Shadow
-        paint.color = Color.argb(70, 0, 0, 0)
-        canvas.drawOval(RectF(sx - 9f * camZoom, sy - 3f * camZoom, sx + 9f * camZoom, sy + 5f * camZoom), paint)
+        paint.style = Paint.Style.FILL
+        paint.color = Color.argb(60, 0, 0, 0)
+        canvas.drawOval(RectF(sx - 8f * camZoom, sy - 3f * camZoom, sx + 8f * camZoom, sy + 4f * camZoom), paint)
+        paint.alpha = 255
 
-        // Worker body & straw hat
         paint.color = Color.parseColor("#2E7D32")
-        canvas.drawRoundRect(RectF(sx - 6f * camZoom, sy - 18f * camZoom - bob, sx + 6f * camZoom, sy - 4f * camZoom - bob), 4f, 4f, paint)
+        canvas.drawRoundRect(RectF(sx - 5.5f * camZoom, sy - 17f * camZoom - bob, sx + 5.5f * camZoom, sy - 4f * camZoom - bob), 4f, 4f, paint)
         paint.color = Color.parseColor("#FFCC80")
-        canvas.drawCircle(sx, sy - 23f * camZoom - bob, 5.5f * camZoom, paint)
+        canvas.drawCircle(sx, sy - 22f * camZoom - bob, 5f * camZoom, paint)
         paint.color = Color.parseColor("#FFD54F")
-        canvas.drawOval(RectF(sx - 9f * camZoom, sy - 29f * camZoom - bob, sx + 9f * camZoom, sy - 24f * camZoom - bob), paint)
-
-        // Carried item icon (Wheat / Green Elixir / Rations)
-        val itemIcon = when (w.carryType) {
-            0 -> "🌾"
-            1 -> "🧪"
-            else -> "🍗"
-        }
-        drawOutlinedText(canvas, itemIcon, sx + 8f * camZoom, sy - 14f * camZoom - bob, 11f * camZoom, Color.WHITE)
+        canvas.drawOval(RectF(sx - 8f * camZoom, sy - 27f * camZoom - bob, sx + 8f * camZoom, sy - 23f * camZoom - bob), paint)
     }
 
     private fun drawUnit25D(canvas: Canvas, u: ActiveUnit) {
         val sx = isoToScreenX(u.gx, u.gy)
         val sy = isoToScreenY(u.gx, u.gy)
-        val bounce = abs(sin(u.animTick * 0.35f)) * 5.5f * camZoom
-        val swingOffset = u.attackSwing * 9f * camZoom
+        val bounce = abs(sin(u.animTick * 0.35f)) * 5f * camZoom
+        val swingOffset = u.attackSwing * 8f * camZoom
 
-        // Ground shadow
-        paint.color = Color.argb(90, 0, 0, 0)
-        canvas.drawOval(RectF(sx - 15f * camZoom, sy - 5f * camZoom, sx + 15f * camZoom, sy + 7f * camZoom), paint)
+        paint.style = Paint.Style.FILL
+        paint.color = Color.argb(65, 0, 0, 0)
+        canvas.drawOval(RectF(sx - 14f * camZoom, sy - 4f * camZoom, sx + 14f * camZoom, sy + 6f * camZoom), paint)
+        paint.alpha = 255
 
         val bmp = bitmaps[u.type.spriteKey]
         if (bmp != null) {
-            val w = 56f * camZoom * (1.0f + u.attackSwing * 0.14f)
+            val w = 64f * camZoom * (1.0f + u.attackSwing * 0.14f)
             val h = w * (bmp.height.toFloat() / bmp.width.toFloat().coerceAtLeast(1f))
-            val dst = RectF(sx - w * 0.5f + swingOffset, sy - h * 0.85f - bounce, sx + w * 0.5f + swingOffset, sy + h * 0.15f - bounce)
-            canvas.drawBitmap(bmp, null, dst, paint)
+            val dst = RectF(sx - w * 0.5f + swingOffset, sy - h * 0.86f - bounce, sx + w * 0.5f + swingOffset, sy + h * 0.14f - bounce)
+            bitmapPaint.alpha = 255
+            canvas.drawBitmap(bmp, null, dst, bitmapPaint)
         } else {
             paint.color = Color.parseColor("#00E676")
             canvas.drawCircle(sx, sy - 15f * camZoom - bounce, 14f * camZoom, paint)
         }
 
-        // HP bar
         val barW = 38f * camZoom
         val barH = 6f * camZoom
         val ratio = (u.hp.toFloat() / u.maxHp.toFloat()).coerceIn(0f, 1f)
-        val by = sy - 54f * camZoom - bounce
-        paint.color = Color.parseColor("#AA000000")
+        val by = sy - 58f * camZoom - bounce
+        paint.color = Color.parseColor("#CC000000")
         canvas.drawRoundRect(RectF(sx - barW / 2, by, sx + barW / 2, by + barH), 3f, 3f, paint)
         paint.color = if (u.isGuildAlly) Color.parseColor("#40C4FF") else Color.parseColor("#00E676")
         canvas.drawRoundRect(RectF(sx - barW / 2, by, sx - barW / 2 + barW * ratio, by + barH), 3f, 3f, paint)
+        paint.alpha = 255
     }
 
     private fun drawAmbientAndProjectiles(canvas: Canvas) {
+        paint.style = Paint.Style.FILL
         for (p in ambientParticles) {
             paint.color = p.color
-            paint.alpha = ((p.life.toFloat() / p.maxLife.toFloat()) * 185).toInt().coerceIn(0, 255)
+            paint.alpha = ((p.life.toFloat() / p.maxLife.toFloat()) * 170).toInt().coerceIn(0, 255)
             canvas.drawCircle(p.sx, p.sy, p.radius * camZoom, paint)
         }
         paint.alpha = 255
 
         for (p in projectiles) {
             val sx = isoToScreenX(p.curGx, p.curGy)
-            val arcLift = sin(p.progress * PI).toFloat() * (if (p.splash) 68f else 26f) * camZoom
+            val arcLift = sin(p.progress * PI).toFloat() * (if (p.splash) 65f else 24f) * camZoom
             val sy = isoToScreenY(p.curGx, p.curGy) - 20f * camZoom - arcLift
             paint.color = p.color
-            canvas.drawCircle(sx, sy, if (p.splash) 10f * camZoom else 6.5f * camZoom, paint)
+            canvas.drawCircle(sx, sy, if (p.splash) 9.5f * camZoom else 6.5f * camZoom, paint)
             paint.style = Paint.Style.STROKE
             paint.strokeWidth = 2f
             paint.color = Color.WHITE
-            canvas.drawCircle(sx, sy, if (p.splash) 10f * camZoom else 6.5f * camZoom, paint)
+            canvas.drawCircle(sx, sy, if (p.splash) 9.5f * camZoom else 6.5f * camZoom, paint)
             paint.style = Paint.Style.FILL
         }
+        paint.alpha = 255
     }
 
     private fun drawFloatTexts(canvas: Canvas) {
         for (ft in floatTexts) {
-            drawOutlinedText(canvas, ft.text, ft.sx, ft.sy, 18f, ft.color)
+            drawOutlinedText(canvas, ft.text, ft.sx, ft.sy, 17f, ft.color)
         }
     }
 
-    // ==================== GLOSSY FARM WARS HUD ====================
-    private fun drawGlossyPanel(canvas: Canvas, rect: RectF, bgColor: Int, borderColor: Int, radius: Float = 18f) {
+    // ==================== SUPERCELL CORNER HUD + INTERACTIVE QUEST BANNER ====================
+    private fun drawGlossyPanel(canvas: Canvas, rect: RectF, bgColor: Int, borderColor: Int, radius: Float = 16f) {
         paint.style = Paint.Style.FILL
         paint.color = bgColor
         canvas.drawRoundRect(rect, radius, radius, paint)
 
-        val highlightRect = RectF(rect.left + 4f, rect.top + 4f, rect.right - 4f, rect.top + rect.height() * 0.42f)
-        paint.color = Color.argb(40, 255, 255, 255)
+        val highlightRect = RectF(rect.left + 4f, rect.top + 3f, rect.right - 4f, rect.top + rect.height() * 0.40f)
+        paint.color = Color.argb(36, 255, 255, 255)
         canvas.drawRoundRect(highlightRect, radius * 0.8f, radius * 0.8f, paint)
 
         paint.style = Paint.Style.STROKE
-        paint.strokeWidth = 3f
+        paint.strokeWidth = 2.5f
         paint.color = borderColor
         canvas.drawRoundRect(rect, radius, radius, paint)
         paint.style = Paint.Style.FILL
+        paint.alpha = 255
     }
 
-    private fun drawGlossyButton(canvas: Canvas, rect: RectF, text: String, topColor: Int, botColor: Int, borderColor: Int = Color.parseColor("#FFF8E1"), textSize: Float = 17f) {
+    private fun drawGlossyButton(canvas: Canvas, rect: RectF, text: String, topColor: Int, botColor: Int, borderColor: Int = Color.parseColor("#FFF8E1"), textSize: Float = 16f) {
         val shadowRect = RectF(rect.left, rect.top + 4f, rect.right, rect.bottom + 4f)
-        paint.color = Color.argb(115, 0, 0, 0)
+        paint.style = Paint.Style.FILL
+        paint.color = Color.argb(110, 0, 0, 0)
         canvas.drawRoundRect(shadowRect, 16f, 16f, paint)
+        paint.alpha = 255
 
-        val grad = LinearGradient(rect.left, rect.top, rect.left, rect.bottom, topColor, botColor, Shader.TileMode.CLAMP)
-        paint.shader = grad
+        paint.shader = LinearGradient(rect.left, rect.top, rect.left, rect.bottom, topColor, botColor, Shader.TileMode.CLAMP)
         canvas.drawRoundRect(rect, 16f, 16f, paint)
         paint.shader = null
 
         val shine = RectF(rect.left + 5f, rect.top + 4f, rect.right - 5f, rect.centerY())
-        paint.color = Color.argb(70, 255, 255, 255)
+        paint.color = Color.argb(65, 255, 255, 255)
         canvas.drawRoundRect(shine, 12f, 12f, paint)
+        paint.alpha = 255
 
         paint.style = Paint.Style.STROKE
         paint.strokeWidth = 2.5f
@@ -1457,134 +1804,141 @@ class GameView(context: Context) : SurfaceView(context), SurfaceHolder.Callback,
         canvas.drawText(text, cx, cy, textPaint)
     }
 
-    private fun drawTopSupercellHUD(canvas: Canvas) {
+    private fun drawSupercellCornerHUD(canvas: Canvas) {
         val pad = 12f
-        val pillW = (screenW - pad * 7) / 6f
-        val pillH = 46f
-
-        val freeBuilders = (totalBuilders - busyBuildersCount()).coerceAtLeast(0)
         val mhLv = getManorHallLevel()
-
-        // 1. Manor Hall Tier & Trophies
-        val p1 = RectF(pad, pad, pad + pillW, pad + pillH)
-        drawGlossyPanel(canvas, p1, Color.parseColor("#CC1B3B22"), Color.parseColor("#FFD54F"), 14f)
-        drawOutlinedText(canvas, "🏰 TH$mhLv | 🏆 $trophies", p1.centerX(), p1.centerY() + 6f, 15f, Color.parseColor("#FFD54F"))
-
-        // 2. Builders
-        val p2 = RectF(p1.right + pad, pad, p1.right + pad + pillW, pad + pillH)
-        drawGlossyPanel(canvas, p2, Color.parseColor("#CC1B3B22"), Color.parseColor("#4FC3F7"), 14f)
-        drawOutlinedText(canvas, "🔨 العمال $freeBuilders/$totalBuilders", p2.centerX(), p2.centerY() + 6f, 15f, Color.parseColor("#81D4FA"))
-
-        // 3. Army Rations / Food (Required to Attack!)
-        val p3 = RectF(p2.right + pad, pad, p2.right + pad + pillW, pad + pillH)
+        val freeBuilders = (totalBuilders - busyBuildersCount()).coerceAtLeast(0)
         val neededRations = getRequiredRationsForArmy()
-        val rationBorder = if (armyRations >= neededRations) Color.parseColor("#FFAB40") else Color.parseColor("#FF5252")
-        drawGlossyPanel(canvas, p3, Color.parseColor("#CC3E2723"), rationBorder, 14f)
-        drawOutlinedText(canvas, "🍗 المؤونة $armyRations/$neededRations", p3.centerX(), p3.centerY() + 6f, 15f, Color.parseColor("#FFCC80"))
 
-        // 4. Green Bio-Elixir (#00E676 instead of purple!)
-        val p4 = RectF(p3.right + pad, pad, p3.right + pad + pillW, pad + pillH)
-        drawGlossyPanel(canvas, p4, Color.parseColor("#CC0D3B1E"), Color.parseColor("#00E676"), 14f)
-        drawOutlinedText(canvas, "🧪 إكسير أخضر $greenElixir", p4.centerX(), p4.centerY() + 6f, 15f, Color.parseColor("#69F0AE"))
+        // TOP-LEFT COMPACT STACK
+        val tlW = 240f
+        val tlH = 38f
+        val p1 = RectF(pad, pad, pad + tlW, pad + tlH)
+        drawGlossyPanel(canvas, p1, Color.parseColor("#D8142C1A"), Color.parseColor("#FFD54F"), 12f)
+        drawOutlinedText(canvas, "🏰 قاعة Lv.$mhLv  |  🏆 $trophies", p1.centerX(), p1.centerY() + 5f, 14.5f, Color.parseColor("#FFD54F"))
 
-        // 5. Gold Coins
-        val p5 = RectF(p4.right + pad, pad, p4.right + pad + pillW, pad + pillH)
-        drawGlossyPanel(canvas, p5, Color.parseColor("#CC3E2723"), Color.parseColor("#FFD54F"), 14f)
-        drawOutlinedText(canvas, "🪙 ذهب $gold", p5.centerX(), p5.centerY() + 6f, 15f, Color.parseColor("#FFE082"))
+        val p2 = RectF(pad, p1.bottom + 6f, pad + tlW, p1.bottom + 6f + tlH)
+        val rationColor = if (armyRations >= neededRations && armyRations > 0) Color.parseColor("#FFAB40") else Color.parseColor("#FF5252")
+        drawGlossyPanel(canvas, p2, Color.parseColor("#D82E1C14"), rationColor, 12f)
+        drawOutlinedText(canvas, "🍗 مؤونة: $armyRations/$neededRations  |  🔨 $freeBuilders/$totalBuilders", p2.centerX(), p2.centerY() + 5f, 13.5f, Color.parseColor("#FFCC80"))
 
-        // 6. Emerald Gems (+)
-        val p6 = RectF(p5.right + pad, pad, p5.right + pad + pillW, pad + pillH)
-        drawGlossyPanel(canvas, p6, Color.parseColor("#CC004D40"), Color.parseColor("#1DE9B6"), 14f)
-        drawOutlinedText(canvas, "💎 $gems [+]", p6.centerX(), p6.centerY() + 6f, 15f, Color.parseColor("#A7FFEB"))
+        val p3 = RectF(pad, p2.bottom + 6f, pad + tlW, p2.bottom + 36f)
+        drawGlossyPanel(canvas, p3, Color.parseColor("#BF102416"), Color.parseColor("#69F0AE"), 10f)
+        val totalTroops = armyRoster.values.sum()
+        drawOutlinedText(canvas, "🌾$wheatCount  🥩$meatCount  🥖$breadCount  |  🛡️جيش:$totalTroops", p3.centerX(), p3.centerY() + 5f, 12.5f, Color.WHITE)
 
-        // Raw Ingredients Sub-bar (Wheat, Meat, Bread + Attack Buff)
-        val subBar = RectF(pad, pad + pillH + 6f, screenW * 0.44f, pad + pillH + 38f)
-        drawGlossyPanel(canvas, subBar, Color.parseColor("#AA102818"), Color.parseColor("#69F0AE"), 10f)
-        val buffStr = if (attackBuffPercent > 0) " | 🔥 هجوم +$attackBuffPercent%" else ""
-        drawOutlinedText(
-            canvas,
-            "🌾 قمح: $wheatCount   🥩 لحوم: $meatCount   🥖 خبز: $breadCount$buffStr",
-            subBar.centerX(), subBar.centerY() + 5f, 14f, Color.WHITE
-        )
+        // TOP-RIGHT COMPACT STACK
+        val trW = 225f
+        val rGold = RectF(screenW - pad - trW, pad, screenW - pad, pad + tlH)
+        drawGlossyPanel(canvas, rGold, Color.parseColor("#D83E2723"), Color.parseColor("#FFD54F"), 12f)
+        drawOutlinedText(canvas, "🪙 ذهب: $gold", rGold.centerX(), rGold.centerY() + 5f, 14.5f, Color.parseColor("#FFE082"))
 
-        // Status Toast Banner
-        if (statusBannerTimer > 0) {
-            val bannerR = RectF(screenW * 0.46f, pad + pillH + 6f, screenW - pad, pad + pillH + 38f)
-            drawGlossyPanel(canvas, bannerR, Color.parseColor("#DD1B5E20"), Color.parseColor("#FFD54F"), 10f)
-            drawOutlinedText(canvas, statusBanner, bannerR.centerX(), bannerR.centerY() + 5f, 13.5f, Color.WHITE)
+        val rElixir = RectF(screenW - pad - trW, rGold.bottom + 6f, screenW - pad, rGold.bottom + 6f + tlH)
+        drawGlossyPanel(canvas, rElixir, Color.parseColor("#D80D3B1E"), Color.parseColor("#00E676"), 12f)
+        drawOutlinedText(canvas, "🧪 إكسير أخضر: $greenElixir", rElixir.centerX(), rElixir.centerY() + 5f, 14.5f, Color.parseColor("#69F0AE"))
+
+        val rGems = RectF(screenW - pad - 155f, rElixir.bottom + 6f, screenW - pad, rElixir.bottom + 36f)
+        drawGlossyPanel(canvas, rGems, Color.parseColor("#D8004D40"), Color.parseColor("#1DE9B6"), 10f)
+        drawOutlinedText(canvas, "💎 $gems [+]", rGems.centerX(), rGems.centerY() + 5f, 13.5f, Color.parseColor("#A7FFEB"))
+
+        // TOP-CENTER: Interactive Quest Guide Banner (plus 1-tap Demo Fortress toggle)
+        if (!inRaidMode) {
+            val qBar = RectF(screenW * 0.25f, pad, screenW * 0.76f, pad + 44f)
+            drawGlossyPanel(canvas, qBar, Color.parseColor("#E6142E1B"), Color.parseColor("#00E676"), 14f)
+            val msg = if (statusBannerTimer > 0 && statusBanner.isNotEmpty()) statusBanner else getCurrentQuestDescription()
+            drawOutlinedText(canvas, msg, qBar.centerX(), qBar.centerY() + 5f, 13.5f, Color.parseColor("#FFF59D"))
+
+            // Quick Mode Buttons under Quest Bar: [🧱 تسوير القاعة] & [⚡ تجربة قلعة كاملة / تصفير]
+            val autoWallBtn = RectF(screenW * 0.31f, qBar.bottom + 6f, screenW * 0.50f, qBar.bottom + 38f)
+            drawGlossyButton(canvas, autoWallBtn, "🧱 تسوير القاعة تلقائياً", Color.parseColor("#6D4C41"), Color.parseColor("#3E2723"), textSize = 12f)
+
+            val demoBtn = RectF(screenW * 0.51f, qBar.bottom + 6f, screenW * 0.69f, qBar.bottom + 38f)
+            val demoLabel = if (myBuildings.size <= 3) "⚡ تجربة قلعة مسوّرة كاملة" else "🔄 بدء اللعبة من الصفر"
+            drawGlossyButton(canvas, demoBtn, demoLabel, Color.parseColor("#00897B"), Color.parseColor("#004D40"), textSize = 12f)
         }
-
-        // Raid Battle Top Progress Overlay
-        if (inRaidMode) {
-            val raidCard = RectF(screenW * 0.30f, pad + pillH + 44f, screenW * 0.70f, pad + pillH + 104f)
-            drawGlossyPanel(canvas, raidCard, Color.parseColor("#DD263238"), Color.parseColor("#FFD54F"), 16f)
-            val sec = (raidTicksLeft / 30).coerceAtLeast(0)
-            val starStr = "⭐".repeat(raidStars) + "☆".repeat(3 - raidStars)
-            drawOutlinedText(canvas, "$raidTargetName | $starStr ($raidDestructionPct%)", raidCard.centerX(), raidCard.top + 26f, 16f, Color.parseColor("#FFD54F"))
-            drawOutlinedText(canvas, "⏱️ الوقت: ${sec}ث | الغنيمة: 🪙$raidLootGold 🧪$raidLootElixir 🍗$raidLootRations", raidCard.centerX(), raidCard.top + 50f, 14f, Color.WHITE)
-        }
-    }
-
-    private fun drawBottomActionBar(canvas: Canvas) {
-        val pad = 12f
-        val barH = 82f
-        val topY = screenH - barH - pad
 
         if (!inRaidMode) {
-            // Selected Building Contextual Bar
-            selectedBuilding?.let { b ->
-                val infoW = 500f
-                val infoRect = RectF(screenW * 0.5f - infoW * 0.5f, topY - 70f, screenW * 0.5f + infoW * 0.5f, topY - 8f)
-                drawGlossyPanel(canvas, infoRect, Color.parseColor("#EE102818"), Color.parseColor("#00E676"), 16f)
+            // BOTTOM-LEFT ACTION BUTTONS: Iconic Attack Shield + Guild War
+            val atkRect = RectF(pad, screenH - pad - 84f, pad + 148f, screenH - pad)
+            drawGlossyButton(canvas, atkRect, "⚔️ هجوم!", Color.parseColor("#FF8F00"), Color.parseColor("#E65100"), Color.parseColor("#FFE082"), 19f)
 
-                val mhLv = getManorHallLevel()
-                val nextLv = b.level + 1
-                val upCost = (b.type.baseCostGold + b.type.baseCostElixir + 240) * b.level
-                val upLabel = when {
-                    b.level >= 3 -> "✅ أقصى مستوى (Lv.3)"
-                    b.type != BType.MANOR_HALL && nextLv > mhLv -> "🔒 رقِّ القاعة لـ Lv.$nextLv"
-                    b.upgradeTicksLeft > 0 -> "⚡ إنهاء فوري (10💎)"
-                    else -> "⬆️ ترقية Lv.$nextLv ($upCost🪙)"
-                }
+            val guildRect = RectF(atkRect.right + 10f, screenH - pad - 68f, atkRect.right + 142f, screenH - pad)
+            drawGlossyButton(canvas, guildRect, "🏰 التحالف", Color.parseColor("#00897B"), Color.parseColor("#004D40"), textSize = 15f)
 
-                drawOutlinedText(canvas, "${b.type.titleAr} (Lv.${b.level}/3)", infoRect.left + 135f, infoRect.centerY() + 6f, 15f, Color.parseColor("#FFD54F"))
+            // BOTTOM-RIGHT 4 COMPACT ACTION CARDS (Build, Kitchen, Army, Contracts)
+            val cardW = 112f
+            val cardH = 68f
+            val gap = 8f
+            val rightLabels = listOf("🏗️ البناء", "🍗 المطبخ", "🛡️ الجيش", "🚚 العقود")
+            val topCols = listOf("#43A047", "#F4511E", "#00C853", "#1E88E5")
+            val botCols = listOf("#1B5E20", "#BF360C", "#00695C", "#0D47A1")
 
-                val upBtn = RectF(infoRect.right - 235f, infoRect.top + 10f, infoRect.right - 95f, infoRect.bottom - 10f)
-                drawGlossyButton(canvas, upBtn, upLabel, Color.parseColor("#43A047"), Color.parseColor("#1B5E20"), textSize = 13f)
-
-                val moveBtn = RectF(infoRect.right - 88f, infoRect.top + 10f, infoRect.right - 10f, infoRect.bottom - 10f)
-                drawGlossyButton(
-                    canvas, moveBtn,
-                    if (moveBuildingMode) "ضع هنا" else "نقل ✥",
-                    Color.parseColor("#1E88E5"), Color.parseColor("#0D47A1"), textSize = 13.5f
-                )
+            val startRightX = screenW - pad - (cardW * 4 + gap * 3)
+            for (i in 0..3) {
+                val cx = startRightX + i * (cardW + gap)
+                val r = RectF(cx, screenH - pad - cardH, cx + cardW, screenH - pad)
+                drawGlossyButton(canvas, r, rightLabels[i], Color.parseColor(topCols[i]), Color.parseColor(botCols[i]), textSize = 14.5f)
             }
 
-            // 6 Glossy Bottom Buttons (Attack, Build, Kitchen/Food, Army, Contracts, Guild)
-            val btnCount = 6
-            val gap = 10f
-            val btnW = (screenW - pad * 2 - gap * (btnCount - 1)) / btnCount
+            // Animated Tutorial Pointer Arrow bouncing over the recommended button!
+            val arrowBob = sin(animTickGlobal * 0.18f) * 8f
+            val targetBtnX: Float? = when (currentQuestStep) {
+                1, 2, 4, 5 -> startRightX + cardW * 0.5f // Point to Build button
+                3 -> if (myBuildings.any { it.type == BType.FIELD_KITCHEN }) startRightX + (cardW + gap) * 1 + cardW * 0.5f else startRightX + cardW * 0.5f
+                6 -> if (myBuildings.any { it.type == BType.ARMY_CAMP }) startRightX + (cardW + gap) * 2 + cardW * 0.5f else startRightX + cardW * 0.5f
+                7 -> atkRect.centerX()
+                else -> null
+            }
+            if (targetBtnX != null && buildModeType == null && activeModal == ModalType.NONE) {
+                drawOutlinedText(canvas, "👇", targetBtnX, screenH - pad - cardH - 16f + arrowBob, 28f, Color.parseColor("#FFD54F"))
+            }
 
-            val labels = listOf(
-                "⚔️ هجوم!",
-                "🏗️ البناء",
-                "🍗 مطبخ الجيش",
-                "🛡️ تدريب الجيش",
-                "🚚 عقود التموين",
-                "🏰 التحالف والحرب"
-            )
-            val topColors = listOf("#FF8F00", "#43A047", "#F4511E", "#00C853", "#1E88E5", "#00897B")
-            val botColors = listOf("#E65100", "#1B5E20", "#BF360C", "#00695C", "#0D47A1", "#004D40")
+            // Active Wall / Building Placement Mode Banner at Bottom-Center
+            buildModeType?.let { bt ->
+                val bCard = RectF(screenW * 0.32f, screenH - pad - 76f, screenW * 0.62f, screenH - pad - 12f)
+                drawGlossyPanel(canvas, bCard, Color.parseColor("#EE1B5E20"), Color.parseColor("#FFD54F"), 16f)
+                val hint = if (bt == BType.STONE_WALL) "🧱 اسحب إصبعك لرسم خط أسوار متصل | [إنهاء ✖]" else "🏗️ انقر على العشب لوضع ${bt.titleAr} | [إلغاء ✖]"
+                drawOutlinedText(canvas, hint, bCard.centerX(), bCard.centerY() + 5f, 13.5f, Color.WHITE)
+            }
 
-            for (i in 0 until btnCount) {
-                val bx = pad + i * (btnW + gap)
-                val r = RectF(bx, topY, bx + btnW, screenH - pad)
-                drawGlossyButton(canvas, r, labels[i], Color.parseColor(topColors[i]), Color.parseColor(botColors[i]), textSize = 15.5f)
+            // BOTTOM-CENTER SELECTED BUILDING INSPECTOR CARD
+            if (buildModeType == null) {
+                selectedBuilding?.let { b ->
+                    val infoW = 420f
+                    val infoRect = RectF(screenW * 0.5f - infoW * 0.5f, screenH - pad - 146f, screenW * 0.5f + infoW * 0.5f, screenH - pad - 82f)
+                    drawGlossyPanel(canvas, infoRect, Color.parseColor("#F0102818"), Color.parseColor("#00E676"), 16f)
+
+                    val nextLv = b.level + 1
+                    val upCost = (b.type.baseCostGold + b.type.baseCostElixir + 160) * b.level
+                    val upLabel = when {
+                        b.level >= 3 -> "✅ ماكس Lv.3"
+                        b.type != BType.MANOR_HALL && nextLv > mhLv -> "🔒 قاعة Lv.$nextLv"
+                        b.upgradeTicksLeft > 0 -> "⚡ إنهاء (10💎)"
+                        else -> "⬆️ ترقية ($upCost🪙)"
+                    }
+
+                    drawOutlinedText(canvas, "${b.type.titleAr} (Lv.${b.level}/3)", infoRect.left + 115f, infoRect.centerY() + 5f, 14f, Color.parseColor("#FFD54F"))
+
+                    val upBtn = RectF(infoRect.right - 205f, infoRect.top + 10f, infoRect.right - 84f, infoRect.bottom - 10f)
+                    drawGlossyButton(canvas, upBtn, upLabel, Color.parseColor("#43A047"), Color.parseColor("#1B5E20"), textSize = 12.5f)
+
+                    val moveBtn = RectF(infoRect.right - 78f, infoRect.top + 10f, infoRect.right - 10f, infoRect.bottom - 10f)
+                    drawGlossyButton(canvas, moveBtn, if (moveBuildingMode) "تثبيت" else "نقل ✥", Color.parseColor("#1E88E5"), Color.parseColor("#0D47A1"), textSize = 13f)
+                }
             }
         } else {
-            // RAID MODE: 6 Units + 3 Spells + Guild Support + End Raid
+            // RAID MODE HUD
+            val raidCard = RectF(screenW * 0.32f, pad, screenW * 0.68f, pad + 58f)
+            drawGlossyPanel(canvas, raidCard, Color.parseColor("#E0263238"), Color.parseColor("#FFD54F"), 14f)
+            val sec = (raidTicksLeft / 30).coerceAtLeast(0)
+            val starStr = "⭐".repeat(raidStars) + "☆".repeat(3 - raidStars)
+            drawOutlinedText(canvas, "$raidTargetName | $starStr ($raidDestructionPct%)", raidCard.centerX(), raidCard.top + 24f, 15f, Color.parseColor("#FFD54F"))
+            drawOutlinedText(canvas, "⏱️ ${sec}ث | الغنيمة: 🪙$raidLootGold 🧪$raidLootElixir 🍗$raidLootRations", raidCard.centerX(), raidCard.top + 46f, 13f, Color.WHITE)
+
             val totalSlots = 11
             val gap = 6f
+            val barH = 76f
+            val topY = screenH - barH - pad
             val slotW = (screenW - pad * 2 - gap * (totalSlots - 1)) / totalSlots
 
             val uTypes = UType.values()
@@ -1594,19 +1948,18 @@ class GameView(context: Context) : SurfaceView(context), SurfaceHolder.Callback,
                 val sx = pad + i * (slotW + gap)
                 val r = RectF(sx, topY, sx + slotW, screenH - pad)
                 val isSel = (selectedSpell == null && selectedUnitType == u)
-                val border = if (isSel) Color.parseColor("#00E676") else Color.parseColor("#90A4AE")
-                drawGlossyPanel(canvas, r, if (cnt > 0) Color.parseColor("#DD102818") else Color.parseColor("#88263238"), border, 12f)
+                drawGlossyPanel(canvas, r, if (cnt > 0) Color.parseColor("#E6102818") else Color.parseColor("#99263238"),
+                    if (isSel) Color.parseColor("#00E676") else Color.parseColor("#90A4AE"), 12f)
 
                 bitmaps[u.spriteKey]?.let { bmp ->
-                    val iconS = 38f
-                    val dst = RectF(r.centerX() - iconS / 2, r.top + 4f, r.centerX() + iconS / 2, r.top + 4f + iconS)
-                    canvas.drawBitmap(bmp, null, dst, paint)
+                    bitmapPaint.alpha = 255
+                    val iconS = 36f
+                    canvas.drawBitmap(bmp, null, RectF(r.centerX() - iconS / 2, r.top + 4f, r.centerX() + iconS / 2, r.top + 4f + iconS), bitmapPaint)
                 }
-                drawOutlinedText(canvas, u.titleAr, r.centerX(), r.bottom - 22f, 11f, Color.WHITE)
-                drawOutlinedText(canvas, "x$cnt", r.centerX(), r.bottom - 6f, 13f, Color.parseColor("#69F0AE"))
+                drawOutlinedText(canvas, u.titleAr, r.centerX(), r.bottom - 20f, 10.5f, Color.WHITE)
+                drawOutlinedText(canvas, "x$cnt", r.centerX(), r.bottom - 5f, 12.5f, Color.parseColor("#69F0AE"))
             }
 
-            // 3 Spells
             val sTypes = SpellType.values()
             for (j in sTypes.indices) {
                 val sp = sTypes[j]
@@ -1615,37 +1968,34 @@ class GameView(context: Context) : SurfaceView(context), SurfaceHolder.Callback,
                 val sx = pad + idx * (slotW + gap)
                 val r = RectF(sx, topY, sx + slotW, screenH - pad)
                 val isSel = (selectedSpell == sp)
-                drawGlossyPanel(canvas, r, Color.parseColor("#DD1B3B22"), if (isSel) Color.parseColor("#FFD54F") else sp.color, 12f)
-                drawOutlinedText(canvas, sp.icon, r.centerX(), r.top + 28f, 20f, Color.WHITE)
-                drawOutlinedText(canvas, sp.titleAr, r.centerX(), r.bottom - 22f, 10.5f, Color.WHITE)
-                drawOutlinedText(canvas, "x$cnt", r.centerX(), r.bottom - 6f, 13f, Color.parseColor("#FFD54F"))
+                drawGlossyPanel(canvas, r, Color.parseColor("#E61B3B22"), if (isSel) Color.parseColor("#FFD54F") else sp.color, 12f)
+                drawOutlinedText(canvas, sp.icon, r.centerX(), r.top + 26f, 18f, Color.WHITE)
+                drawOutlinedText(canvas, sp.titleAr, r.centerX(), r.bottom - 20f, 10.5f, Color.WHITE)
+                drawOutlinedText(canvas, "x$cnt", r.centerX(), r.bottom - 5f, 12.5f, Color.parseColor("#FFD54F"))
             }
 
-            // Slot 9: Guild Reinforcements
             val ccX = pad + 9 * (slotW + gap)
-            val ccRect = RectF(ccX, topY, ccX + slotW, screenH - pad)
-            drawGlossyButton(
-                canvas, ccRect,
-                if (guildReinforcementsCalled) "✅ تم الدعم" else "🏰 دعم التحالف",
-                Color.parseColor("#00897B"), Color.parseColor("#004D40"), textSize = 12f
-            )
+            drawGlossyButton(canvas, RectF(ccX, topY, ccX + slotW, screenH - pad),
+                if (guildReinforcementsCalled) "✅ تم" else "🏰 دعم",
+                Color.parseColor("#00897B"), Color.parseColor("#004D40"), textSize = 12f)
 
-            // Slot 10: End Battle
             val endX = pad + 10 * (slotW + gap)
-            val endRect = RectF(endX, topY, endX + slotW, screenH - pad)
-            drawGlossyButton(canvas, endRect, "🏳️ إنهاء", Color.parseColor("#E53935"), Color.parseColor("#B71C1C"), textSize = 13.5f)
+            drawGlossyButton(canvas, RectF(endX, topY, endX + slotW, screenH - pad),
+                "🏳️ إنهاء", Color.parseColor("#E53935"), Color.parseColor("#B71C1C"), textSize = 13f)
         }
     }
 
     // ==================== MODAL DIALOGS ====================
     private fun drawActiveModal(canvas: Canvas) {
+        paint.style = Paint.Style.FILL
         paint.color = Color.argb(165, 0, 0, 0)
         canvas.drawRect(0f, 0f, screenW, screenH, paint)
+        paint.alpha = 255
 
         val panel = RectF(screenW * 0.08f, screenH * 0.11f, screenW * 0.92f, screenH * 0.87f)
-        drawGlossyPanel(canvas, panel, Color.parseColor("#F5122A1A"), Color.parseColor("#00E676"), 24f)
+        drawGlossyPanel(canvas, panel, Color.parseColor("#F5122A1A"), Color.parseColor("#00E676"), 22f)
 
-        val closeBtn = RectF(panel.right - 58f, panel.top + 12f, panel.right - 12f, panel.top + 56f)
+        val closeBtn = RectF(panel.right - 56f, panel.top + 12f, panel.right - 12f, panel.top + 54f)
         drawGlossyButton(canvas, closeBtn, "✖", Color.parseColor("#E53935"), Color.parseColor("#B71C1C"), textSize = 18f)
 
         when (activeModal) {
@@ -1661,15 +2011,15 @@ class GameView(context: Context) : SurfaceView(context), SurfaceHolder.Callback,
 
     private fun drawBuildShopModal(canvas: Canvas, panel: RectF) {
         val mhLv = getManorHallLevel()
-        drawOutlinedText(canvas, "🏗️ متجر مباني المزرعة والدفاعات (قاعة المزرعة الحالية: المستوى $mhLv/3)", panel.centerX(), panel.top + 42f, 21f, Color.parseColor("#69F0AE"))
+        drawOutlinedText(canvas, "🏗️ متجر المباني والأسوار المتصلة (قاعة المزرعة: المستوى $mhLv/3)", panel.centerX(), panel.top + 40f, 20f, Color.parseColor("#69F0AE"))
 
         val buildable = BType.values().filter { it != BType.MANOR_HALL }
         val cols = 4
         val rows = 3
         val pad = 12f
-        val gridTop = panel.top + 64f
+        val gridTop = panel.top + 62f
         val cellW = (panel.width() - pad * (cols + 1)) / cols
-        val cellH = (panel.height() - 80f - pad * (rows + 1)) / rows
+        val cellH = (panel.height() - 78f - pad * (rows + 1)) / rows
 
         for (i in buildable.indices) {
             val t = buildable[i]
@@ -1680,83 +2030,81 @@ class GameView(context: Context) : SurfaceView(context), SurfaceHolder.Callback,
             val card = RectF(cx, cy, cx + cellW, cy + cellH)
             val unlocked = mhLv >= t.unlockManorLv
 
-            drawGlossyPanel(
-                canvas, card,
+            drawGlossyPanel(canvas, card,
                 if (unlocked) Color.parseColor("#DD1B3B22") else Color.parseColor("#AA263238"),
-                if (unlocked) Color.parseColor("#00E676") else Color.parseColor("#78909C"), 14f
-            )
+                if (unlocked) Color.parseColor("#00E676") else Color.parseColor("#78909C"), 14f)
 
             bitmaps[t.spriteKey]?.let { bmp ->
-                val iconS = min(cellW * 0.36f, cellH * 0.50f)
+                bitmapPaint.alpha = 255
+                val iconS = min(cellW * 0.36f, cellH * 0.54f)
                 val dst = RectF(card.left + 10f, card.centerY() - iconS * 0.5f, card.left + 10f + iconS, card.centerY() + iconS * 0.5f)
-                canvas.drawBitmap(bmp, null, dst, paint)
+                canvas.drawBitmap(bmp, null, dst, bitmapPaint)
             }
 
-            drawOutlinedText(canvas, t.titleAr, card.centerX() + 26f, card.top + 26f, 14f, Color.WHITE)
+            drawOutlinedText(canvas, t.titleAr, card.centerX() + 26f, card.top + 26f, 13.5f, Color.WHITE)
             val costTxt = if (!unlocked) {
-                "🔒 تفتح في قاعة مستوى ${t.unlockManorLv}"
+                "🔒 قاعة مستوى ${t.unlockManorLv}"
             } else if (t.baseCostGold > 0 && t.baseCostElixir > 0) {
                 "🪙${t.baseCostGold} + 🧪${t.baseCostElixir}"
             } else if (t.baseCostGold > 0) {
                 "🪙 ${t.baseCostGold} ذهب"
             } else {
-                "🧪 ${t.baseCostElixir} إكسير أخضر"
+                "🧪 ${t.baseCostElixir} إكسير"
             }
-            drawOutlinedText(canvas, costTxt, card.centerX() + 26f, card.top + 50f, 12.5f, Color.parseColor("#FFD54F"))
+            drawOutlinedText(canvas, costTxt, card.centerX() + 26f, card.top + 48f, 12f, Color.parseColor("#FFD54F"))
 
-            val buyR = RectF(card.left + cellW * 0.38f, card.bottom - 38f, card.right - 10f, card.bottom - 8f)
-            drawGlossyButton(
-                canvas, buyR,
+            val buyR = RectF(card.left + cellW * 0.38f, card.bottom - 36f, card.right - 10f, card.bottom - 8f)
+            drawGlossyButton(canvas, buyR,
                 if (unlocked) "بناء الآن" else "مغلق 🔒",
                 if (unlocked) Color.parseColor("#43A047") else Color.parseColor("#546E7A"),
                 if (unlocked) Color.parseColor("#1B5E20") else Color.parseColor("#37474F"),
-                textSize = 13f
-            )
+                textSize = 12.5f)
         }
     }
 
     private fun drawKitchenRationsModal(canvas: Canvas, panel: RectF) {
         val neededRations = getRequiredRationsForArmy()
-        drawOutlinedText(canvas, "🍗 مطبخ تجهيز مؤونة الجيش (الرصيد: $armyRations🍗 | المطلوب للهجوم: $neededRations🍗)", panel.centerX(), panel.top + 42f, 20f, Color.parseColor("#FFAB40"))
-        drawOutlinedText(canvas, "المخزون الزراعي: 🌾 قمح ($wheatCount)  |  🥩 لحوم الماشية ($meatCount)  |  🥖 خبز الطاحونة ($breadCount)", panel.centerX(), panel.top + 72f, 15.5f, Color.WHITE)
+        drawOutlinedText(canvas, "🍗 مطبخ تجهيز مؤونة الجيش (الرصيد: $armyRations🍗 | المطلوب للهجوم: $neededRations🍗)", panel.centerX(), panel.top + 40f, 19.5f, Color.parseColor("#FFAB40"))
+        drawOutlinedText(canvas, "المخزون الزراعي: 🌾 قمح ($wheatCount)  |  🥩 لحوم الماشية ($meatCount)  |  🥖 خبز الطاحونة ($breadCount)", panel.centerX(), panel.top + 70f, 15f, Color.WHITE)
 
         val meals = listOf(
-            Triple("🥖 وجبة المزارع السريعة (+35 مؤونة 🍗)", "التكلفة: 2 قمح 🌾", "تجهيز سريع للغارات الخفيفة"),
-            Triple("🍗 وليمة الشواء المحارب (+85 مؤونة 🍗)", "التكلفة: 2 قمح 🌾 + 1 لحوم 🥩", "تموين مشبع لجيش المزرعة بالكامل"),
-            Triple("🔥 وليمة الزمرد الملكية (+160 مؤونة 🍗 + 25% قوة هجوم!)", "التكلفة: 3 قمح 🌾 + 2 لحوم 🥩 + 150 إكسير أخضر 🧪", "تمنح جيشك بالكامل +25% ضرر إضافي في الهجوم القادم!")
+            Triple("🥖 وجبة المزارع السريعة (+35 مؤونة 🍗)", "التكلفة: 2 قمح 🌾", "تجهيز سريع لتدريب الجنود والغارات"),
+            Triple("🍗 وليمة الشواء المحارب (+85 مؤونة 🍗)", "التكلفة: 2 قمح 🌾 + 1 لحوم 🥩", "تموين مشبع لجيش المزرعة"),
+            Triple("🔥 وليمة الزمرد الملكية (+160 مؤونة 🍗 + 25% قوة هجوم!)", "التكلفة: 3 قمح 🌾 + 2 لحوم 🥩 + 150 إكسير أخضر 🧪", "تمنح جيشك +25% ضرر إضافي في المعركة القادمة!")
         )
 
-        val startY = panel.top + 96f
-        val rowH = (panel.height() - 125f) / 3f
+        val startY = panel.top + 94f
+        val rowH = (panel.height() - 120f) / 3f
         for (i in meals.indices) {
             val ry = startY + i * rowH
             val rowRect = RectF(panel.left + 24f, ry, panel.right - 24f, ry + rowH - 12f)
             drawGlossyPanel(canvas, rowRect, Color.parseColor("#DD2E1C14"), Color.parseColor("#FFAB40"), 16f)
 
             bitmaps["field_kitchen"]?.let { bmp ->
+                bitmapPaint.alpha = 255
                 val s = rowH * 0.65f
-                canvas.drawBitmap(bmp, null, RectF(rowRect.left + 16f, rowRect.centerY() - s / 2, rowRect.left + 16f + s, rowRect.centerY() + s / 2), paint)
+                canvas.drawBitmap(bmp, null, RectF(rowRect.left + 16f, rowRect.centerY() - s / 2, rowRect.left + 16f + s, rowRect.centerY() + s / 2), bitmapPaint)
             }
 
-            drawOutlinedText(canvas, meals[i].first, rowRect.centerX() - 20f, rowRect.top + 32f, 17f, Color.parseColor("#FFD54F"))
-            drawOutlinedText(canvas, "${meals[i].second}  —  ${meals[i].third}", rowRect.centerX() - 20f, rowRect.top + 62f, 13.5f, Color.WHITE)
+            drawOutlinedText(canvas, meals[i].first, rowRect.centerX() - 20f, rowRect.top + 30f, 16.5f, Color.parseColor("#FFD54F"))
+            drawOutlinedText(canvas, "${meals[i].second}  —  ${meals[i].third}", rowRect.centerX() - 20f, rowRect.top + 58f, 13f, Color.WHITE)
 
-            val cookBtn = RectF(rowRect.right - 190f, rowRect.centerY() - 24f, rowRect.right - 18f, rowRect.centerY() + 24f)
-            drawGlossyButton(canvas, cookBtn, "🍳 اطبخ للـجيش", Color.parseColor("#F4511E"), Color.parseColor("#BF360C"), textSize = 15f)
+            val cookBtn = RectF(rowRect.right - 185f, rowRect.centerY() - 22f, rowRect.right - 18f, rowRect.centerY() + 22f)
+            drawGlossyButton(canvas, cookBtn, "🍳 اطبخ للجيش", Color.parseColor("#F4511E"), Color.parseColor("#BF360C"), textSize = 14.5f)
         }
     }
 
     private fun drawArmyTrainModal(canvas: Canvas, panel: RectF) {
         val mhLv = getManorHallLevel()
-        drawOutlinedText(canvas, "🛡️ معسكر تدريب جيش المزرعة والتميمة الخضراء (قاعة مستوى $mhLv)", panel.centerX(), panel.top + 42f, 20f, Color.parseColor("#69F0AE"))
+        drawOutlinedText(canvas, "🛡️ معسكر تدريب جيش المزرعة والتميمة الخضراء (قاعة مستوى $mhLv)", panel.centerX(), panel.top + 40f, 19.5f, Color.parseColor("#69F0AE"))
 
         val units = UType.values()
         val cols = 3
         val rows = 2
         val pad = 14f
-        val gridTop = panel.top + 64f
+        val gridTop = panel.top + 62f
         val cellW = (panel.width() - pad * (cols + 1)) / cols
-        val cellH = (panel.height() - 150f - pad * (rows + 1)) / rows
+        val cellH = (panel.height() - 148f - pad * (rows + 1)) / rows
 
         for (i in units.indices) {
             val u = units[i]
@@ -1767,34 +2115,30 @@ class GameView(context: Context) : SurfaceView(context), SurfaceHolder.Callback,
             val card = RectF(cx, cy, cx + cellW, cy + cellH)
             val unlocked = mhLv >= u.unlockManorLv
 
-            drawGlossyPanel(
-                canvas, card,
+            drawGlossyPanel(canvas, card,
                 if (unlocked) Color.parseColor("#DD102818") else Color.parseColor("#AA263238"),
-                if (unlocked) Color.parseColor("#00E676") else Color.parseColor("#78909C"), 16f
-            )
+                if (unlocked) Color.parseColor("#00E676") else Color.parseColor("#78909C"), 16f)
 
             bitmaps[u.spriteKey]?.let { bmp ->
+                bitmapPaint.alpha = 255
                 val s = min(cellW * 0.34f, cellH * 0.62f)
                 val dst = RectF(card.left + 12f, card.centerY() - s * 0.5f, card.left + 12f + s, card.centerY() + s * 0.5f)
-                canvas.drawBitmap(bmp, null, dst, paint)
+                canvas.drawBitmap(bmp, null, dst, bitmapPaint)
             }
 
             val cnt = armyRoster[u] ?: 0
-            drawOutlinedText(canvas, "${u.titleAr} (x$cnt)", card.centerX() + 34f, card.top + 28f, 15.5f, Color.WHITE)
-            drawOutlinedText(canvas, "❤️${u.maxHp} | ⚔️${u.damage}", card.centerX() + 34f, card.top + 52f, 13f, Color.parseColor("#A5D6A7"))
+            drawOutlinedText(canvas, "${u.titleAr} (x$cnt)", card.centerX() + 34f, card.top + 28f, 15f, Color.WHITE)
+            drawOutlinedText(canvas, "❤️${u.maxHp} | ⚔️${u.damage}", card.centerX() + 34f, card.top + 50f, 12.5f, Color.parseColor("#A5D6A7"))
 
-            val btnR = RectF(card.left + cellW * 0.36f, card.bottom - 42f, card.right - 12f, card.bottom - 8f)
+            val btnR = RectF(card.left + cellW * 0.36f, card.bottom - 40f, card.right - 12f, card.bottom - 8f)
             val label = if (unlocked) "تدريب (🧪${u.costElixir} + 🍗${u.costRations})" else "🔒 قاعة مستوى ${u.unlockManorLv}"
-            drawGlossyButton(
-                canvas, btnR, label,
+            drawGlossyButton(canvas, btnR, label,
                 if (unlocked) Color.parseColor("#00C853") else Color.parseColor("#546E7A"),
                 if (unlocked) Color.parseColor("#00695C") else Color.parseColor("#37474F"),
-                textSize = 12.5f
-            )
+                textSize = 12f)
         }
 
-        // Bottom Spell Brewing Bar
-        val spellBarY = panel.bottom - 72f
+        val spellBarY = panel.bottom - 70f
         val spells = SpellType.values()
         val spW = (panel.width() - pad * 4) / 3f
         for (j in spells.indices) {
@@ -1802,69 +2146,68 @@ class GameView(context: Context) : SurfaceView(context), SurfaceHolder.Callback,
             val sx = panel.left + pad + j * (spW + pad)
             val sr = RectF(sx, spellBarY, sx + spW, panel.bottom - 14f)
             val cnt = spellCounts[sp] ?: 0
-            drawGlossyButton(canvas, sr, "${sp.icon} ${sp.titleAr} (x$cnt) - 🧪${sp.costElixir}", Color.parseColor("#2E7D32"), Color.parseColor("#1B5E20"), textSize = 13.5f)
+            drawGlossyButton(canvas, sr, "${sp.icon} ${sp.titleAr} (x$cnt) - 🧪${sp.costElixir}", Color.parseColor("#2E7D32"), Color.parseColor("#1B5E20"), textSize = 13f)
         }
     }
 
     private fun drawContractsModal(canvas: Canvas, panel: RectF) {
-        drawOutlinedText(canvas, "🚚 عقود تموين المزارع وتجارة المحاصيل", panel.centerX(), panel.top + 42f, 21f, Color.parseColor("#FFD54F"))
-        drawOutlinedText(canvas, "مخزنك: 🌾 قمح ($wheatCount)  |  🥩 لحوم ($meatCount)  |  🥖 خبز ($breadCount)", panel.centerX(), panel.top + 74f, 16f, Color.WHITE)
+        drawOutlinedText(canvas, "🚚 عقود تموين المزارع وتجارة المحاصيل", panel.centerX(), panel.top + 40f, 20f, Color.parseColor("#FFD54F"))
+        drawOutlinedText(canvas, "مخزنك: 🌾 قمح ($wheatCount)  |  🥩 لحوم ($meatCount)  |  🥖 خبز ($breadCount)", panel.centerX(), panel.top + 70f, 15.5f, Color.WHITE)
 
-        val startY = panel.top + 96f
-        val rowH = (panel.height() - 120f) / 3f
+        val startY = panel.top + 94f
+        val rowH = (panel.height() - 118f) / 3f
         for (i in contracts.indices) {
             val o = contracts[i]
             val ry = startY + i * rowH
             val rowRect = RectF(panel.left + 24f, ry, panel.right - 24f, ry + rowH - 12f)
             drawGlossyPanel(canvas, rowRect, Color.parseColor("#DD1B3B22"), Color.parseColor("#00E676"), 16f)
 
-            drawOutlinedText(canvas, "📜 ${o.title}", rowRect.left + 180f, rowRect.top + 30f, 16.5f, Color.parseColor("#FFD54F"))
-            drawOutlinedText(canvas, "المطلوب: 🌾${o.reqWheat}  🥩${o.reqMeat}  🥖${o.reqBread}", rowRect.left + 180f, rowRect.top + 58f, 14.5f, Color.WHITE)
-            drawOutlinedText(canvas, "المكافأة: +${o.rewardGold}🪙  +${o.rewardElixir}🧪  +${o.rewardRations}🍗", rowRect.centerX() + 45f, rowRect.centerY() + 6f, 15.5f, Color.parseColor("#69F0AE"))
+            drawOutlinedText(canvas, "📜 ${o.title}", rowRect.left + 180f, rowRect.top + 28f, 16f, Color.parseColor("#FFD54F"))
+            drawOutlinedText(canvas, "المطلوب: 🌾${o.reqWheat}  🥩${o.reqMeat}  🥖${o.reqBread}", rowRect.left + 180f, rowRect.top + 56f, 14f, Color.WHITE)
+            drawOutlinedText(canvas, "المكافأة: +${o.rewardGold}🪙  +${o.rewardElixir}🧪  +${o.rewardRations}🍗", rowRect.centerX() + 45f, rowRect.centerY() + 6f, 15f, Color.parseColor("#69F0AE"))
 
             val sendBtn = RectF(rowRect.right - 175f, rowRect.centerY() - 22f, rowRect.right - 16f, rowRect.centerY() + 22f)
-            drawGlossyButton(canvas, sendBtn, "🚚 إرسال الشحنة", Color.parseColor("#43A047"), Color.parseColor("#1B5E20"), textSize = 14.5f)
+            drawGlossyButton(canvas, sendBtn, "🚚 إرسال الشحنة", Color.parseColor("#43A047"), Color.parseColor("#1B5E20"), textSize = 14f)
         }
     }
 
     private fun drawGuildWarModal(canvas: Canvas, panel: RectF) {
-        drawOutlinedText(canvas, "🏰 تحالف [$guildName] — حرب المزارع 5v5 والسحابة", panel.centerX(), panel.top + 42f, 20f, Color.parseColor("#69F0AE"))
+        drawOutlinedText(canvas, "🏰 تحالف [$guildName] — حرب المزارع 5v5 والسحابة", panel.centerX(), panel.top + 40f, 19.5f, Color.parseColor("#69F0AE"))
 
-        val leftBox = RectF(panel.left + 20f, panel.top + 66f, panel.centerX() - 10f, panel.bottom - 20f)
+        val leftBox = RectF(panel.left + 20f, panel.top + 64f, panel.centerX() - 10f, panel.bottom - 20f)
         drawGlossyPanel(canvas, leftBox, Color.parseColor("#DD102818"), Color.parseColor("#FFD54F"), 16f)
-        drawOutlinedText(canvas, "⚔️ حرب التحالفات (5 ضد 5)", leftBox.centerX(), leftBox.top + 32f, 18f, Color.parseColor("#FFD54F"))
-        drawOutlinedText(canvas, "تحالفنا ⭐ $warOurStars  —  $warEnemyStars ⭐ الخصم", leftBox.centerX(), leftBox.top + 68f, 19f, Color.WHITE)
-        drawOutlinedText(canvas, "هجمات الحرب المتبقية: $warAttacksLeft / 2", leftBox.centerX(), leftBox.top + 98f, 14.5f, Color.parseColor("#A5D6A7"))
+        drawOutlinedText(canvas, "⚔️ حرب التحالفات (5 ضد 5)", leftBox.centerX(), leftBox.top + 32f, 17.5f, Color.parseColor("#FFD54F"))
+        drawOutlinedText(canvas, "تحالفنا ⭐ $warOurStars  —  $warEnemyStars ⭐ الخصم", leftBox.centerX(), leftBox.top + 66f, 18.5f, Color.WHITE)
+        drawOutlinedText(canvas, "هجمات الحرب المتبقية: $warAttacksLeft / 2", leftBox.centerX(), leftBox.top + 96f, 14f, Color.parseColor("#A5D6A7"))
 
-        val warAtkBtn = RectF(leftBox.left + 24f, leftBox.top + 118f, leftBox.right - 24f, leftBox.top + 168f)
-        drawGlossyButton(canvas, warAtkBtn, "🔥 هجوم حرب التحالفات (+غنائم مضاعفة)", Color.parseColor("#FF6F00"), Color.parseColor("#E65100"), textSize = 15f)
+        val warAtkBtn = RectF(leftBox.left + 24f, leftBox.top + 116f, leftBox.right - 24f, leftBox.top + 164f)
+        drawGlossyButton(canvas, warAtkBtn, "🔥 هجوم حرب التحالفات (+غنائم مضاعفة)", Color.parseColor("#FF6F00"), Color.parseColor("#E65100"), textSize = 14.5f)
 
-        val syncBtn = RectF(leftBox.left + 24f, leftBox.top + 182f, leftBox.right - 24f, leftBox.top + 230f)
-        drawGlossyButton(canvas, syncBtn, "☁️ مزامنة مع apk3rade.mangoad.online", Color.parseColor("#1E88E5"), Color.parseColor("#0D47A1"), textSize = 14f)
+        val syncBtn = RectF(leftBox.left + 24f, leftBox.top + 178f, leftBox.right - 24f, leftBox.top + 226f)
+        drawGlossyButton(canvas, syncBtn, "☁️ مزامنة مع apk3rade.mangoad.online", Color.parseColor("#1E88E5"), Color.parseColor("#0D47A1"), textSize = 13.5f)
 
-        val editGuildBtn = RectF(leftBox.left + 24f, leftBox.top + 244f, leftBox.right - 24f, leftBox.top + 292f)
-        drawGlossyButton(canvas, editGuildBtn, "✏️ تغيير اسم اللاعب / التحالف", Color.parseColor("#00897B"), Color.parseColor("#004D40"), textSize = 14f)
+        val editGuildBtn = RectF(leftBox.left + 24f, leftBox.top + 240f, leftBox.right - 24f, leftBox.top + 288f)
+        drawGlossyButton(canvas, editGuildBtn, "✏️ تغيير اسم اللاعب / التحالف", Color.parseColor("#00897B"), Color.parseColor("#004D40"), textSize = 13.5f)
 
-        val rightBox = RectF(panel.centerX() + 10f, panel.top + 66f, panel.right - 20f, panel.bottom - 20f)
+        val rightBox = RectF(panel.centerX() + 10f, panel.top + 64f, panel.right - 20f, panel.bottom - 20f)
         drawGlossyPanel(canvas, rightBox, Color.parseColor("#DD102818"), Color.parseColor("#00E676"), 16f)
-        drawOutlinedText(canvas, "💬 دردشة التحالف وطلب المؤونة", rightBox.centerX(), rightBox.top + 32f, 17f, Color.parseColor("#80CBC4"))
+        drawOutlinedText(canvas, "💬 دردشة التحالف وطلب المؤونة", rightBox.centerX(), rightBox.top + 32f, 16.5f, Color.parseColor("#80CBC4"))
 
-        var chatY = rightBox.top + 66f
-        val recent = guildChat.takeLast(6)
-        for (msg in recent) {
-            drawOutlinedText(canvas, msg, rightBox.centerX(), chatY, 13f, Color.WHITE)
-            chatY += 32f
+        var chatY = rightBox.top + 64f
+        for (msg in guildChat.takeLast(6)) {
+            drawOutlinedText(canvas, msg, rightBox.centerX(), chatY, 12.5f, Color.WHITE)
+            chatY += 30f
         }
 
-        val donateBtn = RectF(rightBox.left + 20f, rightBox.bottom - 62f, rightBox.centerX() - 6f, rightBox.bottom - 14f)
-        drawGlossyButton(canvas, donateBtn, "🎁 طلب مؤونة ودعم", Color.parseColor("#43A047"), Color.parseColor("#1B5E20"), textSize = 13.5f)
+        val donateBtn = RectF(rightBox.left + 20f, rightBox.bottom - 60f, rightBox.centerX() - 6f, rightBox.bottom - 14f)
+        drawGlossyButton(canvas, donateBtn, "🎁 طلب مؤونة ودعم", Color.parseColor("#43A047"), Color.parseColor("#1B5E20"), textSize = 13f)
 
-        val chatBtn = RectF(rightBox.centerX() + 6f, rightBox.bottom - 62f, rightBox.right - 20f, rightBox.bottom - 14f)
-        drawGlossyButton(canvas, chatBtn, "💬 إرسال رسالة", Color.parseColor("#00897B"), Color.parseColor("#004D40"), textSize = 13.5f)
+        val chatBtn = RectF(rightBox.centerX() + 6f, rightBox.bottom - 60f, rightBox.right - 20f, rightBox.bottom - 14f)
+        drawGlossyButton(canvas, chatBtn, "💬 إرسال رسالة", Color.parseColor("#00897B"), Color.parseColor("#004D40"), textSize = 13f)
     }
 
     private fun drawGemShopModal(canvas: Canvas, panel: RectF) {
-        drawOutlinedText(canvas, "💎 خزانة الزمرد والعمال الإضافيين", panel.centerX(), panel.top + 42f, 22f, Color.parseColor("#A7FFEB"))
+        drawOutlinedText(canvas, "💎 خزانة الزمرد والعمال الإضافيين", panel.centerX(), panel.top + 40f, 21f, Color.parseColor("#A7FFEB"))
 
         val items = listOf(
             Triple("🔨 تعيين عامل بناء إضافي (#${totalBuilders + 1})", "يبني ويطور عدة مباني في نفس الوقت", "50 💎"),
@@ -1873,26 +2216,24 @@ class GameView(context: Context) : SurfaceView(context), SurfaceHolder.Callback,
             Triple("🪙 صندوق الذهب الملكي (+3000 ذهب)", "عملات ذهبية لترقية قاعة المزرعة والدفاعات", "25 💎")
         )
 
-        val cols = 2
-        val rows = 2
         val pad = 18f
-        val gridTop = panel.top + 70f
+        val gridTop = panel.top + 68f
         val cellW = (panel.width() - pad * 3) / 2f
-        val cellH = (panel.height() - 95f - pad * 3) / 2f
+        val cellH = (panel.height() - 92f - pad * 3) / 2f
 
         for (i in items.indices) {
-            val c = i % cols
-            val r = i / cols
+            val c = i % 2
+            val r = i / 2
             val cx = panel.left + pad + c * (cellW + pad)
             val cy = gridTop + r * (cellH + pad)
             val card = RectF(cx, cy, cx + cellW, cy + cellH)
             drawGlossyPanel(canvas, card, Color.parseColor("#DD004D40"), Color.parseColor("#1DE9B6"), 16f)
 
-            drawOutlinedText(canvas, items[i].first, card.centerX(), card.top + 36f, 16.5f, Color.parseColor("#FFD54F"))
-            drawOutlinedText(canvas, items[i].second, card.centerX(), card.top + 68f, 13.5f, Color.WHITE)
+            drawOutlinedText(canvas, items[i].first, card.centerX(), card.top + 34f, 16f, Color.parseColor("#FFD54F"))
+            drawOutlinedText(canvas, items[i].second, card.centerX(), card.top + 64f, 13f, Color.WHITE)
 
-            val buyBtn = RectF(card.centerX() - 90f, card.bottom - 52f, card.centerX() + 90f, card.bottom - 12f)
-            drawGlossyButton(canvas, buyBtn, "شراء (${items[i].third})", Color.parseColor("#00BFA5"), Color.parseColor("#00695C"), textSize = 15f)
+            val buyBtn = RectF(card.centerX() - 90f, card.bottom - 50f, card.centerX() + 90f, card.bottom - 12f)
+            drawGlossyButton(canvas, buyBtn, "شراء (${items[i].third})", Color.parseColor("#00BFA5"), Color.parseColor("#00695C"), textSize = 14.5f)
         }
     }
 
@@ -1901,11 +2242,10 @@ class GameView(context: Context) : SurfaceView(context), SurfaceHolder.Callback,
         val tx = event.x
         val ty = event.y
 
-        // Tap anywhere on Loading Screen to enter Farm Wars immediately
         if (isLoadingScreen) {
             if (event.action == MotionEvent.ACTION_UP) {
                 isLoadingScreen = false
-                showBanner("🌾 مرحباً بك في FARM WARS! اطبخ مؤونة الجيش 🍗 في المطبخ وطور قاعة المزرعة!")
+                showBanner("🌱 ابدأ من الصفر! اتبع شريط المهام بأعلى الشاشة لتعمير مزرعتك وتسويرها")
             }
             return true
         }
@@ -1921,10 +2261,30 @@ class GameView(context: Context) : SurfaceView(context), SurfaceHolder.Callback,
             MotionEvent.ACTION_MOVE -> {
                 val dx = tx - lastTouchX
                 val dy = ty - lastTouchY
+                // Continuous Finger-Drag Wall Painting when in Wall Build Mode!
+                if (buildModeType == BType.STONE_WALL && activeModal == ModalType.NONE && ty in 110f..(screenH - 100f)) {
+                    val (gxF, gyF) = screenToIso(tx, ty)
+                    val gx = gxF.toInt()
+                    val gy = gyF.toInt()
+                    if (gx in 1..(gridSize - 1) && gy in 1..(gridSize - 1) && isAreaFree(gx, gy, 1, null)) {
+                        if (gold >= BType.STONE_WALL.baseCostGold) {
+                            gold -= BType.STONE_WALL.baseCostGold
+                            val newId = (myBuildings.maxOfOrNull { it.id } ?: 0) + 1
+                            myBuildings.add(PlacedBuilding(newId, BType.STONE_WALL, gx, gy, 1, BType.STONE_WALL.maxHp, BType.STONE_WALL.maxHp, tapBounce = 1f))
+                            checkQuestProgression()
+                            saveVillage()
+                        }
+                    }
+                    lastTouchX = tx
+                    lastTouchY = ty
+                    return true
+                }
+
                 if (hypot(tx - touchDownX, ty - touchDownY) > 14f && activeModal == ModalType.NONE) {
                     isDraggingMap = true
-                    camX = (camX + dx).coerceIn(-screenW * 0.45f, screenW * 0.45f)
-                    camY = (camY + dy).coerceIn(-screenH * 0.45f, screenH * 0.45f)
+                    camX += dx
+                    camY += dy
+                    clampCameraToIsland()
                 }
                 lastTouchX = tx
                 lastTouchY = ty
@@ -1944,30 +2304,53 @@ class GameView(context: Context) : SurfaceView(context), SurfaceHolder.Callback,
             return
         }
 
-        // Top HUD Taps
-        if (ty <= 64f) {
-            if (tx >= screenW * 0.82f) {
-                activeModal = ModalType.GEM_SHOP
+        val pad = 12f
+        if (tx <= 260f && ty in 52f..96f) {
+            activeModal = ModalType.KITCHEN_RATIONS
+            return
+        }
+        if (tx >= screenW - 180f && ty in 92f..136f) {
+            activeModal = ModalType.GEM_SHOP
+            return
+        }
+
+        // Top-Center Quick Wall Ring & Demo Fortress Toggle Buttons
+        if (!inRaidMode && ty in 58f..98f) {
+            val autoWallBtn = RectF(screenW * 0.31f, 62f, screenW * 0.50f, 96f)
+            val demoBtn = RectF(screenW * 0.51f, 62f, screenW * 0.69f, 96f)
+            if (autoWallBtn.contains(tx, ty)) {
+                autoSurroundManorWithWalls()
                 return
             }
-            if (tx in (screenW * 0.33f)..(screenW * 0.50f)) {
-                activeModal = ModalType.KITCHEN_RATIONS
+            if (demoBtn.contains(tx, ty)) {
+                if (myBuildings.size <= 3) {
+                    buildSampleWalledFortress()
+                } else {
+                    resetToZeroScratchStart()
+                    showBanner("🔄 تمت إعادة اللعبة للبداية من الصفر (قاعة المزرعة فقط + الأرض البرية)!")
+                }
                 return
             }
         }
 
-        val pad = 12f
-        val barH = 82f
-        val topY = screenH - barH - pad
+        // Cancel active buildModeType banner tap
+        if (!inRaidMode && buildModeType != null) {
+            val bCard = RectF(screenW * 0.32f, screenH - pad - 76f, screenW * 0.62f, screenH - pad - 12f)
+            if (bCard.contains(tx, ty)) {
+                buildModeType = null
+                showBanner("✅ تم إنهاء وضع البناء")
+                return
+            }
+        }
 
-        // Contextual Building Upgrade/Move Bar
-        if (!inRaidMode && selectedBuilding != null) {
-            val infoW = 500f
-            val infoRect = RectF(screenW * 0.5f - infoW * 0.5f, topY - 70f, screenW * 0.5f + infoW * 0.5f, topY - 8f)
+        // Selected Building Contextual Inspector Card
+        if (!inRaidMode && buildModeType == null && selectedBuilding != null) {
+            val infoW = 420f
+            val infoRect = RectF(screenW * 0.5f - infoW * 0.5f, screenH - pad - 146f, screenW * 0.5f + infoW * 0.5f, screenH - pad - 82f)
             if (infoRect.contains(tx, ty)) {
                 val b = selectedBuilding!!
-                val upBtn = RectF(infoRect.right - 235f, infoRect.top + 10f, infoRect.right - 95f, infoRect.bottom - 10f)
-                val moveBtn = RectF(infoRect.right - 88f, infoRect.top + 10f, infoRect.right - 10f, infoRect.bottom - 10f)
+                val upBtn = RectF(infoRect.right - 205f, infoRect.top + 10f, infoRect.right - 84f, infoRect.bottom - 10f)
+                val moveBtn = RectF(infoRect.right - 78f, infoRect.top + 10f, infoRect.right - 10f, infoRect.bottom - 10f)
                 if (upBtn.contains(tx, ty)) {
                     triggerBuildingUpgrade(b)
                     return
@@ -1981,22 +2364,37 @@ class GameView(context: Context) : SurfaceView(context), SurfaceHolder.Callback,
             }
         }
 
-        // Bottom Bar Taps
-        if (ty >= topY) {
-            if (!inRaidMode) {
-                val btnCount = 6
-                val gap = 10f
-                val btnW = (screenW - pad * 2 - gap * (btnCount - 1)) / btnCount
-                val idx = ((tx - pad) / (btnW + gap)).toInt().coerceIn(0, btnCount - 1)
+        // Bottom Corner Buttons
+        if (!inRaidMode) {
+            val atkRect = RectF(pad, screenH - pad - 84f, pad + 148f, screenH - pad)
+            if (atkRect.contains(tx, ty)) {
+                startRaidBattle(false)
+                return
+            }
+            val guildRect = RectF(atkRect.right + 10f, screenH - pad - 68f, atkRect.right + 142f, screenH - pad)
+            if (guildRect.contains(tx, ty)) {
+                activeModal = ModalType.GUILD_WAR
+                return
+            }
+
+            val cardW = 112f
+            val cardH = 68f
+            val gap = 8f
+            val startRightX = screenW - pad - (cardW * 4 + gap * 3)
+            if (ty >= screenH - pad - cardH && tx >= startRightX) {
+                val idx = ((tx - startRightX) / (cardW + gap)).toInt().coerceIn(0, 3)
                 when (idx) {
-                    0 -> startRaidBattle(false)
-                    1 -> activeModal = ModalType.BUILD_SHOP
-                    2 -> activeModal = ModalType.KITCHEN_RATIONS
-                    3 -> activeModal = ModalType.ARMY_TRAIN
-                    4 -> activeModal = ModalType.TRUCK_ORDERS
-                    5 -> activeModal = ModalType.GUILD_WAR
+                    0 -> activeModal = ModalType.BUILD_SHOP
+                    1 -> activeModal = ModalType.KITCHEN_RATIONS
+                    2 -> activeModal = ModalType.ARMY_TRAIN
+                    3 -> activeModal = ModalType.TRUCK_ORDERS
                 }
-            } else {
+                return
+            }
+        } else {
+            val barH = 76f
+            val topY = screenH - barH - pad
+            if (ty >= topY) {
                 val totalSlots = 11
                 val gap = 6f
                 val slotW = (screenW - pad * 2 - gap * (totalSlots - 1)) / totalSlots
@@ -2012,8 +2410,8 @@ class GameView(context: Context) : SurfaceView(context), SurfaceHolder.Callback,
                     9 -> deployGuildReinforcements()
                     10 -> endRaidBattle()
                 }
+                return
             }
-            return
         }
 
         // Tap on Isometric World
@@ -2059,7 +2457,7 @@ class GameView(context: Context) : SurfaceView(context), SurfaceHolder.Callback,
             return
         }
 
-        // Placing New Building
+        // Placing New Building or Wall
         buildModeType?.let { bType ->
             if (gx in 1..(gridSize - bType.footprint) && gy in 1..(gridSize - bType.footprint)) {
                 if (isAreaFree(gx, gy, bType.footprint, null)) {
@@ -2071,6 +2469,7 @@ class GameView(context: Context) : SurfaceView(context), SurfaceHolder.Callback,
                         myBuildings.add(placed)
                         selectedBuilding = placed
                         if (bType != BType.STONE_WALL) buildModeType = null
+                        checkQuestProgression()
                         saveVillage()
                         showBanner("✅ تم بناء ${bType.titleAr}!")
                     } else {
@@ -2078,7 +2477,7 @@ class GameView(context: Context) : SurfaceView(context), SurfaceHolder.Callback,
                         buildModeType = null
                     }
                 } else {
-                    showBanner("⚠️ هذا الموقع مشغول بمبنى آخر!")
+                    showBanner("⚠️ الموقع مشغول!")
                 }
             }
             return
@@ -2102,7 +2501,22 @@ class GameView(context: Context) : SurfaceView(context), SurfaceHolder.Callback,
             return
         }
 
-        // Tap Existing Building to Collect or Select
+        // Tap Wild Obstacle to Clear it for Gems!
+        val tappedObs = wildObstacles.firstOrNull { ob -> gx == ob.gx && gy == ob.gy }
+        if (tappedObs != null) {
+            if (tappedObs.clearTicksLeft == 0) {
+                if (gold >= tappedObs.type.clearCostGold) {
+                    gold -= tappedObs.type.clearCostGold
+                    tappedObs.clearTicksLeft = 90 // 3 seconds
+                    showBanner("⛏️ جاري إزالة ${tappedObs.type.titleAr} لاستخراج الجواهر 💎!")
+                } else {
+                    showBanner("⚠️ تحتاج ${tappedObs.type.clearCostGold} ذهب 🪙 لإزالة هذا العائق!")
+                }
+            }
+            return
+        }
+
+        // Tap Existing Building
         val tapped = myBuildings.firstOrNull { b ->
             val fp = b.type.footprint
             gx >= b.gx && gx < b.gx + fp && gy >= b.gy && gy < b.gy + fp
@@ -2147,6 +2561,7 @@ class GameView(context: Context) : SurfaceView(context), SurfaceHolder.Callback,
                     }
                     else -> {}
                 }
+                checkQuestProgression()
                 saveVillage()
             } else if (tapped.type == BType.FIELD_KITCHEN && selectedBuilding == tapped) {
                 activeModal = ModalType.KITCHEN_RATIONS
@@ -2170,22 +2585,22 @@ class GameView(context: Context) : SurfaceView(context), SurfaceHolder.Callback,
             return
         }
         if (b.level >= 3) {
-            showBanner("✅ هذا المبنى وصل لأقصى مستوى ترقية (المستوى 3)!")
+            showBanner("✅ هذا المبنى وصل لأقصى مستوى (Lv.3)!")
             return
         }
         val mhLv = getManorHallLevel()
         if (b.type != BType.MANOR_HALL && b.level + 1 > mhLv) {
-            showBanner("⚠️ يجب ترقية قاعة المزرعة الكبرى (Manor Hall) للمستوى ${b.level + 1} أولاً!")
+            showBanner("⚠️ يجب ترقية قاعة المزرعة الكبرى للمستوى ${b.level + 1} أولاً!")
             return
         }
         if (busyBuildersCount() >= totalBuilders) {
-            showBanner("⚠️ جميع العمال مشغولون! عيّن عاملاً جديداً من خزانة الزمرد 💎")
+            showBanner("⚠️ جميع العمال مشغولون!")
             return
         }
-        val upCost = (b.type.baseCostGold + b.type.baseCostElixir + 240) * b.level
+        val upCost = (b.type.baseCostGold + b.type.baseCostElixir + 160) * b.level
         if (gold >= upCost) {
             gold -= upCost
-            b.upgradeTotalTicks = 15 * 30
+            b.upgradeTotalTicks = 10 * 30
             b.upgradeTicksLeft = b.upgradeTotalTicks
             saveVillage()
             showBanner("🔨 بدأت ترقية ${b.type.titleAr} إلى المستوى ${b.level + 1}!")
@@ -2196,7 +2611,7 @@ class GameView(context: Context) : SurfaceView(context), SurfaceHolder.Callback,
 
     private fun deployGuildReinforcements() {
         if (guildReinforcementsCalled) {
-            showBanner("⚠️ تم استدعاء دعم التحالف بالفعل في هذه الغارة!")
+            showBanner("⚠️ تم استدعاء دعم التحالف بالفعل!")
             return
         }
         guildReinforcementsCalled = true
@@ -2214,12 +2629,17 @@ class GameView(context: Context) : SurfaceView(context), SurfaceHolder.Callback,
             val overlapY = gy < b.gy + bFp && gy + fp > b.gy
             if (overlapX && overlapY) return false
         }
+        for (ob in wildObstacles) {
+            val overlapX = gx < ob.gx + 1 && gx + fp > ob.gx
+            val overlapY = gy < ob.gy + 1 && gy + fp > ob.gy
+            if (overlapX && overlapY) return false
+        }
         return true
     }
 
     private fun handleModalTap(tx: Float, ty: Float) {
         val panel = RectF(screenW * 0.08f, screenH * 0.11f, screenW * 0.92f, screenH * 0.87f)
-        val closeBtn = RectF(panel.right - 58f, panel.top + 12f, panel.right - 12f, panel.top + 56f)
+        val closeBtn = RectF(panel.right - 56f, panel.top + 12f, panel.right - 12f, panel.top + 54f)
         if (closeBtn.contains(tx, ty) || !panel.contains(tx, ty)) {
             activeModal = ModalType.NONE
             return
@@ -2232,9 +2652,9 @@ class GameView(context: Context) : SurfaceView(context), SurfaceHolder.Callback,
                 val cols = 4
                 val rows = 3
                 val pad = 12f
-                val gridTop = panel.top + 64f
+                val gridTop = panel.top + 62f
                 val cellW = (panel.width() - pad * (cols + 1)) / cols
-                val cellH = (panel.height() - 80f - pad * (rows + 1)) / rows
+                val cellH = (panel.height() - 78f - pad * (rows + 1)) / rows
                 for (i in buildable.indices) {
                     val c = i % cols
                     val r = i / cols
@@ -2248,7 +2668,7 @@ class GameView(context: Context) : SurfaceView(context), SurfaceHolder.Callback,
                         } else {
                             buildModeType = t
                             activeModal = ModalType.NONE
-                            showBanner("🏗️ انقر على أي مربع أخضر في المزرعة لبناء ${t.titleAr}")
+                            showBanner(if (t == BType.STONE_WALL) "🧱 انقر أو اسحب إصبعك لرسم خط أسوار متصل حول قاعتك!" else "🏗️ انقر على أي مربع أخضر في المزرعة لبناء ${t.titleAr}")
                         }
                         return
                     }
@@ -2256,46 +2676,18 @@ class GameView(context: Context) : SurfaceView(context), SurfaceHolder.Callback,
             }
 
             ModalType.KITCHEN_RATIONS -> {
-                val startY = panel.top + 96f
-                val rowH = (panel.height() - 125f) / 3f
+                val startY = panel.top + 94f
+                val rowH = (panel.height() - 120f) / 3f
                 for (i in 0..2) {
                     val ry = startY + i * rowH
                     val rowRect = RectF(panel.left + 24f, ry, panel.right - 24f, ry + rowH - 12f)
                     if (rowRect.contains(tx, ty)) {
                         when (i) {
-                            0 -> {
-                                if (wheatCount >= 2) {
-                                    wheatCount -= 2
-                                    armyRations += 35
-                                    breadCount += 1
-                                    showBanner("🥖 تم خبز وجبة المزارع السريعة (+35 مؤونة جيش 🍗)!")
-                                } else {
-                                    showBanner("⚠️ تحتاج 2 قمح 🌾! احصد القمح من الحقول أولاً.")
-                                }
-                            }
-                            1 -> {
-                                if (wheatCount >= 2 && meatCount >= 1) {
-                                    wheatCount -= 2
-                                    meatCount -= 1
-                                    armyRations += 85
-                                    showBanner("🍗 تم طهي وليمة الشواء المحارب (+85 مؤونة جيش 🍗)!")
-                                } else {
-                                    showBanner("⚠️ تحتاج 2 قمح 🌾 و 1 لحوم 🥩!")
-                                }
-                            }
-                            2 -> {
-                                if (wheatCount >= 3 && meatCount >= 2 && greenElixir >= 150) {
-                                    wheatCount -= 3
-                                    meatCount -= 2
-                                    greenElixir -= 150
-                                    armyRations += 160
-                                    attackBuffPercent = 25
-                                    showBanner("🔥 تم تجهيز وليمة الزمرد الملكية (+160 مؤونة 🍗 + 25% قوة هجوم للجيش)!")
-                                } else {
-                                    showBanner("⚠️ تحتاج 3 قمح 🌾 و 2 لحوم 🥩 و 150 إكسير أخضر 🧪!")
-                                }
-                            }
+                            0 -> if (wheatCount >= 2) { wheatCount -= 2; armyRations += 35; breadCount += 1; showBanner("🥖 تم خبز وجبة المزارع (+35 مؤونة 🍗)!") } else showBanner("⚠️ تحتاج 2 قمح 🌾!")
+                            1 -> if (wheatCount >= 2 && meatCount >= 1) { wheatCount -= 2; meatCount -= 1; armyRations += 85; showBanner("🍗 تم طهي وليمة الشواء (+85 مؤونة 🍗)!") } else showBanner("⚠️ تحتاج 2 قمح 🌾 و 1 لحوم 🥩!")
+                            2 -> if (wheatCount >= 3 && meatCount >= 2 && greenElixir >= 150) { wheatCount -= 3; meatCount -= 2; greenElixir -= 150; armyRations += 160; attackBuffPercent = 25; showBanner("🔥 تم تجهيز وليمة الزمرد (+160 مؤونة + 25% هجوم)!") } else showBanner("⚠️ تحتاج 3 قمح و 2 لحوم و 150 إكسير أخضر!")
                         }
+                        checkQuestProgression()
                         saveVillage()
                         return
                     }
@@ -2308,9 +2700,9 @@ class GameView(context: Context) : SurfaceView(context), SurfaceHolder.Callback,
                 val cols = 3
                 val rows = 2
                 val pad = 14f
-                val gridTop = panel.top + 64f
+                val gridTop = panel.top + 62f
                 val cellW = (panel.width() - pad * (cols + 1)) / cols
-                val cellH = (panel.height() - 150f - pad * (rows + 1)) / rows
+                val cellH = (panel.height() - 148f - pad * (rows + 1)) / rows
                 for (i in units.indices) {
                     val c = i % cols
                     val r = i / cols
@@ -2320,24 +2712,24 @@ class GameView(context: Context) : SurfaceView(context), SurfaceHolder.Callback,
                     if (card.contains(tx, ty)) {
                         val u = units[i]
                         if (mhLv < u.unlockManorLv) {
-                            showBanner("🔒 تفتح وحدة ${u.titleAr} عند ترقية قاعة المزرعة للمستوى ${u.unlockManorLv}!")
+                            showBanner("🔒 تفتح وحدة ${u.titleAr} في قاعة مستوى ${u.unlockManorLv}!")
                             return
                         }
                         if (greenElixir >= u.costElixir && armyRations >= u.costRations) {
                             greenElixir -= u.costElixir
                             armyRations -= u.costRations
                             armyRoster[u] = (armyRoster[u] ?: 0) + 1
+                            checkQuestProgression()
                             saveVillage()
-                            showBanner("✅ تم تدريب ${u.titleAr} وتزويده بالمؤونة!")
+                            showBanner("✅ تم تدريب ${u.titleAr}!")
                         } else {
-                            showBanner("⚠️ تحتاج 🧪${u.costElixir} إكسير أخضر و 🍗${u.costRations} مؤونة لتدريب ${u.titleAr}!")
+                            showBanner("⚠️ تحتاج 🧪${u.costElixir} إكسير و 🍗${u.costRations} مؤونة لتدريب الجندي!")
                         }
                         return
                     }
                 }
 
-                // Spell Brewing
-                val spellBarY = panel.bottom - 72f
+                val spellBarY = panel.bottom - 70f
                 val spells = SpellType.values()
                 val spW = (panel.width() - pad * 4) / 3f
                 for (j in spells.indices) {
@@ -2359,8 +2751,8 @@ class GameView(context: Context) : SurfaceView(context), SurfaceHolder.Callback,
             }
 
             ModalType.TRUCK_ORDERS -> {
-                val startY = panel.top + 96f
-                val rowH = (panel.height() - 120f) / 3f
+                val startY = panel.top + 94f
+                val rowH = (panel.height() - 118f) / 3f
                 for (i in contracts.indices) {
                     val ry = startY + i * rowH
                     val rowRect = RectF(panel.left + 24f, ry, panel.right - 24f, ry + rowH - 12f)
@@ -2379,9 +2771,9 @@ class GameView(context: Context) : SurfaceView(context), SurfaceHolder.Callback,
                                 550 + Random.nextInt(450), 480 + Random.nextInt(400), 45 + Random.nextInt(40)
                             )
                             saveVillage()
-                            showBanner("🚚 تم تسليم الشحنة واستلام الذهب والإكسير الأخضر والمؤونة!")
+                            showBanner("🚚 تم تسليم الشحنة واستلام المكافأة!")
                         } else {
-                            showBanner("⚠️ المنتجات الزراعية غير كافية! احصد القمح واللحوم أولاً.")
+                            showBanner("⚠️ المنتجات الزراعية غير كافية!")
                         }
                         return
                     }
@@ -2389,10 +2781,10 @@ class GameView(context: Context) : SurfaceView(context), SurfaceHolder.Callback,
             }
 
             ModalType.GUILD_WAR -> {
-                val leftBox = RectF(panel.left + 20f, panel.top + 66f, panel.centerX() - 10f, panel.bottom - 20f)
-                val warAtkBtn = RectF(leftBox.left + 24f, leftBox.top + 118f, leftBox.right - 24f, leftBox.top + 168f)
-                val syncBtn = RectF(leftBox.left + 24f, leftBox.top + 182f, leftBox.right - 24f, leftBox.top + 230f)
-                val editGuildBtn = RectF(leftBox.left + 24f, leftBox.top + 244f, leftBox.right - 24f, leftBox.top + 292f)
+                val leftBox = RectF(panel.left + 20f, panel.top + 64f, panel.centerX() - 10f, panel.bottom - 20f)
+                val warAtkBtn = RectF(leftBox.left + 24f, leftBox.top + 116f, leftBox.right - 24f, leftBox.top + 164f)
+                val syncBtn = RectF(leftBox.left + 24f, leftBox.top + 178f, leftBox.right - 24f, leftBox.top + 226f)
+                val editGuildBtn = RectF(leftBox.left + 24f, leftBox.top + 240f, leftBox.right - 24f, leftBox.top + 288f)
 
                 if (warAtkBtn.contains(tx, ty)) {
                     if (warAttacksLeft > 0) {
@@ -2412,15 +2804,15 @@ class GameView(context: Context) : SurfaceView(context), SurfaceHolder.Callback,
                     return
                 }
 
-                val rightBox = RectF(panel.centerX() + 10f, panel.top + 66f, panel.right - 20f, panel.bottom - 20f)
-                val donateBtn = RectF(rightBox.left + 20f, rightBox.bottom - 62f, rightBox.centerX() - 6f, rightBox.bottom - 14f)
-                val chatBtn = RectF(rightBox.centerX() + 6f, rightBox.bottom - 62f, rightBox.right - 20f, rightBox.bottom - 14f)
+                val rightBox = RectF(panel.centerX() + 10f, panel.top + 64f, panel.right - 20f, panel.bottom - 20f)
+                val donateBtn = RectF(rightBox.left + 20f, rightBox.bottom - 60f, rightBox.centerX() - 6f, rightBox.bottom - 14f)
+                val chatBtn = RectF(rightBox.centerX() + 6f, rightBox.bottom - 60f, rightBox.right - 20f, rightBox.bottom - 14f)
 
                 if (donateBtn.contains(tx, ty)) {
                     armyRoster[UType.MECH] = (armyRoster[UType.MECH] ?: 0) + 1
                     armyRations += 40
-                    guildChat.add("🎁 التحالف دعم $playerName بآلي حصاد مدرع + 40 مؤونة 🍗!")
-                    showBanner("🎁 استلمت آلي حصاد مدرع + 40 مؤونة جيش من التحالف!")
+                    guildChat.add("🎁 التحالف دعم $playerName بآلي حصاد + 40 مؤونة 🍗!")
+                    showBanner("🎁 استلمت آلي حصاد + 40 مؤونة جيش!")
                     saveVillage()
                     return
                 }
@@ -2432,9 +2824,9 @@ class GameView(context: Context) : SurfaceView(context), SurfaceHolder.Callback,
 
             ModalType.GEM_SHOP -> {
                 val pad = 18f
-                val gridTop = panel.top + 70f
+                val gridTop = panel.top + 68f
                 val cellW = (panel.width() - pad * 3) / 2f
-                val cellH = (panel.height() - 95f - pad * 3) / 2f
+                val cellH = (panel.height() - 92f - pad * 3) / 2f
                 for (i in 0..3) {
                     val c = i % 2
                     val r = i / 2
@@ -2444,7 +2836,7 @@ class GameView(context: Context) : SurfaceView(context), SurfaceHolder.Callback,
                     if (card.contains(tx, ty)) {
                         when (i) {
                             0 -> if (gems >= 50) { gems -= 50; totalBuilders++; showBanner("🔨 تم تعيين عامل بناء إضافي!") } else showBanner("⚠️ تحتاج 50 جوهرة 💎!")
-                            1 -> if (gems >= 20) { gems -= 20; armyRations += 150; showBanner("🍗 +150 مؤونة جيش جاهزة!") } else showBanner("⚠️ تحتاج 20 جوهرة 💎!")
+                            1 -> if (gems >= 20) { gems -= 20; armyRations += 150; showBanner("🍗 +150 مؤونة جيش!") } else showBanner("⚠️ تحتاج 20 جوهرة 💎!")
                             2 -> if (gems >= 25) { gems -= 25; greenElixir += 2500; showBanner("🧪 +2500 إكسير أخضر!") } else showBanner("⚠️ تحتاج 25 جوهرة 💎!")
                             3 -> if (gems >= 25) { gems -= 25; gold += 3000; showBanner("🪙 +3000 ذهب!") } else showBanner("⚠️ تحتاج 25 جوهرة 💎!")
                         }
@@ -2457,7 +2849,6 @@ class GameView(context: Context) : SurfaceView(context), SurfaceHolder.Callback,
         }
     }
 
-    // ==================== INFINITYFREE + CLOUDFLARE SYNC ====================
     private fun promptEditGuildDialog() {
         post {
             val layout = LinearLayout(context).apply {
@@ -2527,7 +2918,7 @@ class GameView(context: Context) : SurfaceView(context), SurfaceHolder.Callback,
                     guildChat.add("☁️ السحابة: تمت المزامنة مع السيرفر بنجاح!")
                     showBanner("✅ تمت المزامنة مع السيرفر بنجاح!")
                 } else {
-                    showBanner("ℹ️ تم الحفظ محلياً (ارفع server_api.php لتفعيل السحابة)")
+                    showBanner("ℹ️ تم الحفظ محلياً")
                 }
             } catch (_: Exception) {
                 showBanner("ℹ️ تم الحفظ محلياً")
