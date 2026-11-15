@@ -1,5 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">حرب الفارس</string>
-    <string name="widget_photo_desc">حرب الفارس</string>
-    <string name="widget_quick_desc">حرب الفارس - تشغيل سريع</string>
+    <string name="app_name">Farm Wars</string>
 </resources>
