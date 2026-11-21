@@ -33,7 +33,7 @@ class ProjectManager(private val context: Context) {
     }
 
     fun createFromTemplate(template: TemplateSpec, requestedName: String): File {
-        val cleanName = requestedName.trim().replace(Regex("[^a-zA-Z0-9_\-\u0600-\u06FF]"), "_")
+        val cleanName = requestedName.trim().replace(Regex("[^a-zA-Z0-9_\u0600-\u06FF-]"), "_")
             .ifEmpty { template.defaultProjectName }
         var target = File(rootDir, cleanName)
         var counter = 2
